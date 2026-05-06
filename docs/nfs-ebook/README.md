@@ -16,7 +16,9 @@
 | 7 | [The Linux NFS Client Stack](./ch07-linux-client.md) | Architecture: VFS → NFS → RPC → xprt, module layering, key code paths |
 | 8 | [The Linux RPC Layer (sunrpc.ko)](./ch08-sunrpc-impl.md) | rpc_clnt, rpc_task, xprt transport switch, multipath (xprtmultipath) |
 | 9 | [dnfs: Distributed NFS Design](./ch09-dnfs-design.md) | Clean-room multipath, kernel patch architecture, code walk |
-| A | [Appendix: On-Wire Protocol Reference](./appendix-wire.md) | XDR primitives, COMPOUND encoding, operation tables |
+| A | [On-Wire Protocol Reference](./aa-wire.md) | XDR primitives, COMPOUND encoding, operation tables |
+| B | [Huawei eNFS Protocol Analysis](./ab-enfs-protocol.md) | EXTEND operation, shard routing, UUID filehandles, multipath architecture |
+| C | [eNFS SunRPC Deviations](./ac-sunrpc-deviations.md) | All 29 changes to clnt.c, xprt.c, data structures, __GENKSYMS__ trick |
 
 ## Kernel Version
 
