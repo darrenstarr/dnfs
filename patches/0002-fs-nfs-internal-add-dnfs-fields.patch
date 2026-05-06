@@ -1,0 +1,94 @@
+From: Darren Starr <darren@example.com>
+Date: Tue, 5 May 2026 23:00:00 +0000
+Subject: [PATCH 2/6] fs/nfs/internal.h: add dnfs mount option fields
+
+Add the dnfs-related fields to the NFS mount context structures.
+These fields carry the parsed remoteaddrs= address list from option
+parsing through to transport creation.
+
+Three structures are affected:
+
+1. nfs_fs_context: stores the parsed address list during mount
+   option parsing (transient, freed after mount completes).
+
+2. nfs_client_initdata: carries the address list from the mount
+   context to the client initialization path.
+
+3. nfs_server: stores a reference to the address list for the
+   lifetime of the mount (used for procfs display and reconnect).
+
+All fields are gated by #if IS_ENABLED(CONFIG_DNFS) and placed
+at the end of their respective structures to avoid affecting
+structure layout for non-dnfs builds.
+
+Signed-off-by: Darren Starr <darren@example.com>
+---
+ fs/nfs/internal.h | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/fs/nfs/internal.h b/fs/nfs/internal.h
+index 46aded5..8f5e3c1 100644
+--- a/fs/nfs/internal.h
++++ b/fs/nfs/internal.h
+@@ -16,6 +16,22 @@
+
+ struct nfs_string;
+
++/*
++ * Maximum number of dnfs remote addresses per mount.
++ * Controlled by CONFIG_DNFS_MAX_REMOTE_ADDRS (default 32).
++ */
++#define DNFS_MAX_ADDR_STRLEN  64
++
++/**
++ * struct dnfs_address_list - Parsed list of server addresses
++ * @count:  Number of valid addresses
++ * @addrs:  Array of sockaddr_storage addresses (variable length)
++ */
++struct dnfs_address_list {
++	unsigned int               count;
++	unsigned int               max;
++	struct sockaddr_storage    addrs[];
++};
++
+ /* Number of different existing nfs_client_t types */
+ #define NFS_SUPER_MAGIC		0x6969
+
+@@ -71,6 +87,10 @@ struct nfs_fs_context {
+ 		struct {
+ 			char		*hostname;
+ 			size_t		hostnamelen;
++#if IS_ENABLED(CONFIG_DNFS)
++			struct dnfs_address_list *dnfs_remoteaddrs;
++			bool           dnfs_parsed;
++#endif
+ 		} nfs_server;
+ 
+ 		struct {
+@@ -175,6 +195,10 @@ struct nfs_client_initdata {
+ 	unsigned long			addrlen;
+ 	struct sockaddr_storage		nfs_server_addr;
+ 	char				*server_name;
++#if IS_ENABLED(CONFIG_DNFS)
++	struct dnfs_address_list	*dnfs_remoteaddrs;
++#endif
++
+ };
+
+ /*
+@@ -217,6 +241,12 @@ struct nfs_server {
+ 	struct nfs_client		*nfs_client;
+ 	struct nfs_iostats __percpu	*io_stats;
+ 	struct nfs_client_initdata	*init_data;
++#if IS_ENABLED(CONFIG_DNFS)
++	/* Parsed remote addresses for dnfs multipath.
++	 * Set during mount, valid for the lifetime of the server.
++	 * Freed during unmount (nfs_free_server).
++	 */
++	struct dnfs_address_list	*dnfs_remoteaddrs;
++#endif
+ };
+
+ /* Client and transport */
+-- 
+2.45.2

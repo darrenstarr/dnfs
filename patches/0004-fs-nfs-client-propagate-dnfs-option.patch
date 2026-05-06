@@ -1,0 +1,84 @@
+From: Darren Starr <darren@example.com>
+Date: Tue, 5 May 2026 23:00:00 +0000
+Subject: [PATCH 4/6] fs/nfs/client.c: propagate dnfs option to nfs_client
+
+Thread the dnfs address list from the mount context through the
+client initialization path. The address list is propagated from:
+
+  nfs_fs_context -> nfs_client_initdata -> nfs_server
+
+This ensures the parsed addresses are available when the NFSv4.1
+session is established and extra transports need to be created.
+
+Signed-off-by: Darren Starr <darren@example.com>
+---
+ fs/nfs/client.c | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/fs/nfs/client.c b/fs/nfs/client.c
+index dd94b93..9e2b3e8 100644
+--- a/fs/nfs/client.c
++++ b/fs/nfs/client.c
+@@ -474,6 +474,15 @@ struct nfs_client *nfs_get_client(const struct nfs_client_initdata *cl_init)
+ 	if (new != NULL)
+ 		new = nfs_alloc_client(cl_init);
+ #endif
++
++	/*
++	 * Transfer the dnfs address list from the init data to the
++	 * newly allocated nfs_client. It will be propagated to the
++	 * nfs_server during nfs_get_server().
++	 */
++	if (!IS_ERR(new) && IS_ENABLED(CONFIG_DNFS) && cl_init->dnfs_remoteaddrs)
++		new->cl_dnfs_remoteaddrs = cl_init->dnfs_remoteaddrs;
++
+ 	return new;
+ }
+
+@@ -613,6 +622,14 @@ static int nfs_init_client(struct nfs_client *clp,
+ {
+ 	int error;
+
++	/*
++	 * Propagate the dnfs address list from the init data.
++	 * This makes the address list available after session creation.
++	 */
++	if (IS_ENABLED(CONFIG_DNFS) && cl_init)
++		clp->cl_dnfs_info = cl_init->dnfs_remoteaddrs;
++
+ 	if (clp->cl_cons_state == NFS_CS_READY) {
+ 		/* the client is already initialised */
+ 		dfprintk(MOUNT, "NFS: nfs_init_client() using old client\n");
+@@ -982,6 +999,15 @@ struct nfs_server *nfs_alloc_server(void)
+ 	atomic_set(&server->loc_open, 0);
+ 	atomic_set(&server->loc_io, 0);
+
++	/*
++	 * Initialize dnfs fields to NULL.
++	 * Set during mount if remoteaddrs= was provided.
++	 */
++	if (IS_ENABLED(CONFIG_DNFS)) {
++		server->dnfs_remoteaddrs = NULL;
++		server->dnfs_naddrs = 0;
++	}
++
+ 	return server;
+ }
+
+@@ -1055,6 +1081,14 @@ void nfs_free_server(struct nfs_server *server)
+ 	for (i = 0; i < server->nfs_iostats_count; i++)
+ 		free_percpu(server->io_stats);
+
++	/*
++	 * Free the dnfs address list if one was allocated.
++	 */
++	if (IS_ENABLED(CONFIG_DNFS)) {
++		kfree(server->dnfs_remoteaddrs);
++		server->dnfs_remoteaddrs = NULL;
++	}
++
+ 	nfs_put_client(server->nfs_client);
+ 	nfs_release_automount_timer();
+ 	kfree(server->server_name);
+-- 
+2.45.2

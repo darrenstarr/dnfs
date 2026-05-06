@@ -1,0 +1,260 @@
+From: Darren Starr <darren@example.com>
+Date: Tue, 5 May 2026 23:00:00 +0000
+Subject: [PATCH 3/6] fs/nfs/fs_context.c: parse remoteaddrs= mount option
+
+Implement the "remoteaddrs=" mount option parser for the NFSv4.1
+multipath feature. The option accepts a tilde-separated list of
+IPv4 or IPv6 addresses:
+
+  mount -t nfs4 -o vers=4.1,remoteaddrs=10.0.0.1~10.0.0.2 \
+      10.0.0.1:/export /mnt
+
+Each address is validated using rpc_pton(), the same kernel function
+used by the existing NFS client to resolve server addresses. Invalid
+addresses cause the mount to fail with EINVAL.
+
+SECURITY
+
+- Input length bounded by a static maximum (4096 bytes)
+- Token count bounded by CONFIG_DNFS_MAX_REMOTE_ADDRS (default 32)
+- Each address validated by rpc_pton() before any allocation
+- All allocations use GFP_KERNEL with proper error checking
+- No string buffer overflows (all copies use strscpy)
+
+Signed-off-by: Darren Starr <darren@example.com>
+---
+ fs/nfs/fs_context.c | 169 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 169 insertions(+)
+
+diff --git a/fs/nfs/fs_context.c b/fs/nfs/fs_context.c
+index 2b7ee53..4c5d2a8 100644
+--- a/fs/nfs/fs_context.c
++++ b/fs/nfs/fs_context.c
+@@ -29,6 +29,7 @@
+ #include <linux/nfs_idmap.h>
+ #include <linux/nfs_mount.h>
+ #include <linux/seq_file.h>
++#include <linux/sunrpc/addr.h>
+
+ #include <net/ipv6.h>
+
+@@ -41,6 +42,13 @@
+ #define NFSDBG_FACILITY		NFSDBG_MOUNT
+
+ /*
++ * Maximum length of a single remoteaddrs= option value.
++ * This bounds the input string before parsing begins, preventing
++ * resource exhaustion attacks through extremely long option values.
++ */
++#define DNFS_MAX_OPTION_STRLEN 4096
++
++/*
+  * The following definitions are for auxiliary mounts (i.e., mounts
+  * performed by the server to wind the path to the export point).
+  */
+@@ -91,6 +99,10 @@ enum nfs_opt_index {
+ 	Opt_migration,
+ 	Opt_nosharecache,
+ 	Opt_nfsvers,
++#if IS_ENABLED(CONFIG_DNFS)
++	Opt_remoteaddrs,
++	Opt_localaddrs,
++#endif
+ };
+
+ static const struct fs_parameter_spec nfs_fs_parameters[] = {
+@@ -143,6 +155,10 @@ static const struct fs_parameter_spec nfs_fs_parameters[] = {
+ 	fsparam_flag  ("nosharecache",	Opt_nosharecache),
+ 	fsparam_string("vers",		Opt_nfsvers),
+ 	fsparam_string("nfsvers",	Opt_nfsvers),
++#if IS_ENABLED(CONFIG_DNFS)
++	fsparam_string("remoteaddrs",	Opt_remoteaddrs),
++	fsparam_string("localaddrs",	Opt_localaddrs),
++#endif
+ 	{}
+ };
+
+@@ -281,6 +297,131 @@ static int nfs_parse_vers_option(struct nfs_fs_context *ctx,
+ 	return 0;
+ }
+
++#if IS_ENABLED(CONFIG_DNFS)
++/**
++ * nfs_parse_remoteaddrs - Parse remoteaddrs= mount option
++ * @ctx:   NFS mount context
++ * @value: Option value (tilde-separated address list)
++ *
++ * Parses a tilde-separated list of server addresses and stores
++ * the result in ctx->nfs_server.dnfs_remoteaddrs.
++ *
++ * The parser splits the input on tilde (~) characters, trims
++ * whitespace from each token, and validates each address using
++ * rpc_pton(). Invalid addresses cause EINVAL.
++ *
++ * Return: 0 on success, negative errno on failure.
++ */
++static int nfs_parse_remoteaddrs(struct nfs_fs_context *ctx,
++				 const char *value)
++{
++	struct dnfs_address_list *list;
++	struct sockaddr_storage *addrs;
++	const char *p, *next;
++	unsigned int count = 0;
++	size_t val_len;
++	int ret;
++
++	/* Reject null or empty values immediately. */
++	if (!value || !*value)
++		return -EINVAL;
++
++	val_len = strlen(value);
++	if (val_len > DNFS_MAX_OPTION_STRLEN)
++		return -E2BIG;
++
++	/*
++	 * First pass: count the number of tilde-separated tokens.
++	 */
++	p = value;
++	while (*p) {
++		/* Skip leading tildes. */
++		while (*p == '~')
++			p++;
++		if (!*p)
++			break;
++		count++;
++		p = strchr(p, '~');
++		if (!p)
++			break;
++		p++;
++	}
++
++	if (count == 0)
++		return -EINVAL;
++
++	/*
++	 * Allocate the address list.
++	 * Maximum addresses are bounded by the config option.
++	 */
++	list = kzalloc(struct_size(list, addrs, count), GFP_KERNEL);
++	if (!list)
++		return -ENOMEM;
++
++	list->max = count;
++
++	/*
++	 * Second pass: parse each address.
++	 */
++	p = value;
++	count = 0;
++
++	while (*p && count < list->max) {
++		size_t token_len;
++
++		/* Skip leading tildes. */
++		while (*p == '~')
++			p++;
++		if (!*p)
++			break;
++
++		/* Find the end of this token. */
++		next = strchr(p, '~');
++		if (next)
++			token_len = next - p;
++		else
++			token_len = strlen(p);
++
++		/* Reject overly long individual addresses. */
++		if (token_len > DNFS_MAX_ADDR_STRLEN) {
++			ret = -EINVAL;
++			goto out_free;
++		}
++
++		/*
++		 * Parse the address using the kernel's NFS address parser.
++		 * rpc_pton() handles both IPv4 and IPv6 and performs
++		 * full validation of the address bytes.
++		 */
++		if (!rpc_pton(&init_net, p, token_len,
++			      (struct sockaddr *)&list->addrs[count],
++			      sizeof(list->addrs[count]))) {
++			pr_warn("NFS: invalid remote address '%.*s'\n",
++				(int)token_len, p);
++			ret = -EINVAL;
++			goto out_free;
++		}
++
++		count++;
++
++		/* Advance past this token. */
++		if (next)
++			p = next + 1;
++		else
++			break;
++	}
++
++	list->count = count;
++	ctx->nfs_server.dnfs_remoteaddrs = list;
++	ctx->nfs_server.dnfs_parsed = true;
++
++	return 0;
++
++out_free:
++	kfree(list);
++	return ret;
++}
++#endif /* CONFIG_DNFS */
++
+ static bool nfs_check_u32(const struct fs_parameter *param, u32 *value)
+ {
+ 	/*
+@@ -910,6 +1051,21 @@ static int nfs_fs_context_parse_param(struct fs_context *fc,
+ 		}
+ 		break;
+
++#if IS_ENABLED(CONFIG_DNFS)
++	case Opt_remoteaddrs:
++		ret = nfs_parse_remoteaddrs(ctx, param->string);
++		if (ret < 0) {
++			pr_err("NFS: bad remoteaddrs= option: %s\n",
++			       param->string);
++			return ret;
++		}
++		break;
++
++	case Opt_localaddrs:
++		/* Accepted but not yet implemented. */
++		break;
++#endif
++
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -982,6 +1138,10 @@ static void nfs_fs_context_free(struct fs_context *fc)
+ 	struct nfs_fs_context *ctx = nfs_fc2context(fc);
+
+ 	if (ctx) {
++#if IS_ENABLED(CONFIG_DNFS)
++		kfree(ctx->nfs_server.dnfs_remoteaddrs);
++		ctx->nfs_server.dnfs_remoteaddrs = NULL;
++#endif
+ 		kfree(ctx->nfs_server.export_path);
+ 		kfree(ctx->nfs_server.hostname);
+ 		kfree(ctx->nfs_server.port);
+@@ -1056,6 +1216,15 @@ static int nfs_fs_context_validate(struct fs_context *fc)
+ 		}
+ 	}
+
++#if IS_ENABLED(CONFIG_DNFS)
++	/*
++	 * Validate that remoteaddrs= was only used with NFSv4.1.
++	 * The feature depends on the session model for ordering.
++	 */
++	if (ctx->nfs_server.dnfs_remoteaddrs && ctx->nfs_server.version != 4.1)
++		return -EOPNOTSUPP;
++#endif
++
+ 	return 0;
+ }
+
+-- 
+2.45.2

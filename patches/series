@@ -1,0 +1,7 @@
+0001-fs-nfs-kconfig-makefile-add-dnfs.patch
+0002-fs-nfs-internal-add-dnfs-fields.patch
+0003-fs-nfs-fs_context-parse-remoteaddrs.patch
+0003b-fs-nfs-dnfs_parse-new-file.patch
+0004-fs-nfs-client-propagate-dnfs-option.patch
+0005-fs-nfs-super-dnfs-mount-hooks.patch
+0006-fs-nfs-nfs4client-create-dnfs-xprts.patch

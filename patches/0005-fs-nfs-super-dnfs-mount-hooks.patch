@@ -1,0 +1,68 @@
+From: Darren Starr <darren@example.com>
+Date: Tue, 5 May 2026 23:00:00 +0000
+Subject: [PATCH 5/6] fs/nfs/super.c: dnfs mount/unmount hooks
+
+Add the mount and unmount hooks for dnfs multipath support.
+
+During mount (nfs_get_tree_common), the parsed address list is
+transferred from the mount context to the nfs_server structure.
+This makes the addresses available for transport creation after
+the NFSv4.1 session is established.
+
+During unmount (nfs_kill_super), the address list is freed.
+This ensures no memory leaks when dnfs-enabled mounts are torn
+down.
+
+Signed-off-by: Darren Starr <darren@example.com>
+---
+ fs/nfs/super.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/fs/nfs/super.c b/fs/nfs/super.c
+index 532766a..d065d4e 100644
+--- a/fs/nfs/super.c
++++ b/fs/nfs/super.c
+@@ -115,6 +115,16 @@ static void nfs_kill_super(struct super_block *s)
+ 	struct nfs_server *server = NFS_SB(s);
+
+ 	kill_block_super(s);
++
++	/*
++	 * Free the dnfs address list if one was allocated during mount.
++	 * The persistent list (server->dnfs_remoteaddrs) was transferred
++	 * from the transient mount context during get_tree.
++	 */
++	if (IS_ENABLED(CONFIG_DNFS)) {
++		kfree(server->dnfs_remoteaddrs);
++		server->dnfs_remoteaddrs = NULL;
++	}
+ }
+
+ static int nfs_set_super(struct super_block *s, struct nfs_server *server)
+@@ -1222,6 +1232,24 @@ int nfs_get_tree_common(struct fs_context *fc)
+ 	s->s_blocksize_bits = 0;
+ 	s->s_blocksize = 0;
+
++	/*
++	 * Transfer the dnfs address list from the mount context to
++	 * the server structure. After this point, the address list
++	 * is owned by the server and will be freed during unmount.
++	 *
++	 * The address list was parsed from the remoteaddrs= mount
++	 * option during fs_context parsing (see fs_context.c).
++	 */
++	if (IS_ENABLED(CONFIG_DNFS)) {
++		struct dnfs_address_list *addrs;
++
++		addrs = ctx->nfs_server.dnfs_remoteaddrs;
++		if (addrs) {
++			server->dnfs_remoteaddrs = addrs;
++			server->dnfs_naddrs = addrs->count;
++		}
++	}
++
+ 	return 0;
+ }
+
+-- 
+2.45.2

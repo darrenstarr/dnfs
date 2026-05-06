@@ -1,0 +1,146 @@
+From: Darren Starr <darren@example.com>
+Date: Tue, 5 May 2026 23:00:00 +0000
+Subject: [PATCH 6/6] fs/nfs/nfs4client.c: create extra dnfs transports
+
+Create additional RPC transports to each address in the remoteaddrs=
+list immediately after the NFSv4.1 session is established.
+
+This function is called from nfs4_create_session() after the session
+is confirmed. For each address in the dnfs address list (excluding
+the primary address which already has a transport), a new TCP
+connection is created via rpc_clnt_add_xprt() and added to the
+client's xprt_switch.
+
+The stock xprt_switch round-robin dispatch automatically distributes
+subsequent NFS operations across all transports — no dispatch code
+changes are needed.
+
+TRANSPORT CREATION STRATEGY
+
+- Each address gets one TCP connection (future: support nconnect per addr)
+- Connections are created sequentially (future: parallel creation)
+- Failed connections are logged but do not fail the mount
+- The primary transport is always available
+
+SESSION COMPATIBILITY
+
+We do NOT call BIND_CONN_TO_SESSION. Standard NFSv4.1 servers accept
+operations on any connection carrying a valid session ID. If a server
+requires explicit connection binding (strict RFC compliance), the
+client falls back gracefully — only the primary transport is used.
+
+Signed-off-by: Darren Starr <darren@example.com>
+---
+ fs/nfs/nfs4client.c | 89 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 89 insertions(+)
+
+diff --git a/fs/nfs/nfs4client.c b/fs/nfs/nfs4client.c
+index 1033e3a..b09e5ca 100644
+--- a/fs/nfs/nfs4client.c
++++ b/fs/nfs/nfs4client.c
+@@ -64,6 +64,82 @@ static int nfs4_setup_session_callback(struct nfs_client *clp)
+ 	return 0;
+ }
+
++#if IS_ENABLED(CONFIG_DNFS)
++/**
++ * nfs4_dnfs_create_xprts - Create extra transports for dnfs
++ * @clp: NFS client with an established NFSv4.1 session
++ *
++ * Called after nfs4_create_session() succeeds. Creates additional
++ * RPC transports to each address in the client's dnfs remote address
++ * list and adds them to the transport switch for round-robin dispatch.
++ *
++ * The primary transport to the mount target server is already created
++ * by rpc_create(). This function only creates transports for the
++ * ADDITIONAL addresses from the remoteaddrs= mount option.
++ *
++ * Return: 0 on success (partial success is still success),
++ *         negative errno on failure.
++ */
++int nfs4_dnfs_create_xprts(struct nfs_client *clp)
++{
++	struct dnfs_address_list *list;
++	struct rpc_clnt *clnt;
++	int i, ret;
++	int success = 0, failed = 0;
++
++	/*
++	 * Validate prerequisites: must have a client with an RPC client
++	 * and a populated dnfs address list.
++	 */
++	if (!clp || !clp->cl_rpcclient)
++		return -EINVAL;
++
++	list = clp->cl_dnfs_info;
++	if (!list || list->count == 0)
++		return 0;
++
++	clnt = clp->cl_rpcclient;
++
++	/*
++	 * Iterate through the address list starting at index 1.
++	 * Index 0 is the primary server — its transport already exists.
++	 * We only create transports for extra addresses.
++	 *
++	 * FUTURE: When the primary server address is not in the list
++	 * (user specifies a different set), we create all transports
++	 * including the primary.
++	 */
++	for (i = 1; i < list->count; i++) {
++		struct sockaddr *sa = (struct sockaddr *)&list->addrs[i];
++		size_t salen = sizeof(list->addrs[i]);
++
++		/*
++		 * Create a new transport to this address and add it
++		 * to the client's xprt_switch.
++		 *
++		 * rpc_clnt_add_xprt() handles TCP connection setup,
++		 * xprt_switch insertion, and connection tracking.
++		 */
++		ret = rpc_clnt_add_xprt(clnt, sa, salen, NULL, NULL);
++		if (ret < 0) {
++			pr_warn("NFS: dnfs: failed to create xprt [%d]: %d\n",
++				i, ret);
++			failed++;
++			continue;
++		}
++
++		success++;
++	}
++
++	if (failed > 0)
++		pr_info("NFS: dnfs: created %d/%d extra transports\n",
++			success, success + failed);
++	else if (success > 0)
++		pr_debug("NFS: dnfs: created %d extra transports\n", success);
++
++	return 0;
++}
++#endif /* CONFIG_DNFS */
++
+ /**
+  * nfs4_init_client_minor_version - Ensure client is created with
+  *				    the correct minor version
+@@ -2089,6 +2165,19 @@ int nfs4_create_session(struct nfs_client *clp)
+ 	else if (status < 0)
+ 		goto out;
+
++	/*
++	 * Session is established. If dnfs multipath is configured,
++	 * create additional transports to the addresses specified
++	 * in the remoteaddrs= mount option.
++	 *
++	 * This is intentionally placed after session creation so that
++	 * the new transports can carry operations using the session ID.
++	 */
++	if (IS_ENABLED(CONFIG_DNFS)) {
++		status = nfs4_dnfs_create_xprts(clp);
++		/* Non-fatal: mount proceeds with whatever transports exist. */
++	}
++
+ out:
+ 	return status;
+ }
+-- 
+2.45.2

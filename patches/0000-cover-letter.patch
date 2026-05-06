@@ -1,0 +1,56 @@
+This patch series adds client-initiated multipath support to the NFSv4.1
+client. The feature allows a single mount to use multiple server addresses
+by distributing NFS operations across separate TCP connections.
+
+Motivation
+==========
+
+Enterprise NFS deployments commonly have multiple network paths between
+clients and storage arrays (multiple NICs, multiple fabric switches).
+Without multipath, one path sits idle while the other carries all traffic.
+Administrators resort to multiple mounts, LACP bonding, or vendor-specific
+solutions.
+
+This implementation is client-only -- no server changes are required.
+It works with any standard NFSv4.1 server (Linux nfsd, NetApp ONTAP,
+Huawei OceanStor, VAST Data, etc.).
+
+Design
+======
+
+The implementation adds a new mount option "remoteaddrs=" that accepts
+a tilde-separated list of IPv4 or IPv6 addresses:
+
+  mount -t nfs4 -o vers=4.1,remoteaddrs=10.0.0.1~10.0.0.2  \
+      10.0.0.1:/export /mnt
+
+After the NFSv4.1 session is established with the primary server,
+additional TCP connections are created to each address in the list
+and added to the SunRPC transport switch (xprt_switch). The stock
+round-robin dispatch distributes operations across all transports.
+
+The NFSv4.1 session model provides ordered execution (slot table),
+deterministic duplicate detection (per-slot cache), and transparent
+failover across all transports with zero additional code.
+
+Patches
+=======
+
+  1/6  fs/nfs/Kconfig + Makefile: add CONFIG_DNFS option
+  2/6  fs/nfs/internal.h: add dnfs fields to mount structures
+  3/6  fs/nfs/fs_context.c: parse remoteaddrs= mount option
+  4/6  fs/nfs/client.c: propagate dnfs option through nfs_client
+  5/6  fs/nfs/super.c: transfer dnfs state during mount/unmount
+  6/6  fs/nfs/nfs4client.c: create extra transports after session
+
+Testing
+=======
+
+- Unit tests for option parsing (user-mode compilation with mocks)
+- Integration tests with Linux nfsd on VM
+- Verified against Huawei OceanStor Pacific 9550
+- /etc/fstab compatibility verified
+- IPv4 and IPv6 address formats tested
+- Error injection: invalid addresses, network failures, timeouts
+
+Signed-off-by: Darren Starr <darren@example.com>
