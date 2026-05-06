@@ -1,4 +1,4 @@
-# Chapter 5: Multipath NFS — Why One Connection Is Never Enough
+# Chapter 6: Multipath NFS — Why One Connection Is Never Enough
 
 ## The Throughput Problem
 
@@ -94,7 +94,7 @@ Let me evaluate each approach.
 
 ### Server Session Trunking (NFSv4.1)
 
-The IETF-standard approach described in Chapter 4. Multiple TCP connections, same session, same client ID.
+The IETF-standard approach described in Chapter 5. Multiple TCP connections, same session, same client ID.
 
 **Pros**: Standards-based. Tightly integrated with NFSv4.1 session model. Connection-level failover.
 

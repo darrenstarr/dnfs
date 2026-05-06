@@ -1,4 +1,4 @@
-# Chapter 4: NFSv4.1 — Sessions, pNFS, and Trunking
+# Chapter 5: NFSv4.1 — Sessions, pNFS, and Trunking
 
 NFSv4 was a successful protocol. By 2005, it was the default filesharing protocol for most enterprise Unix and Linux deployments. But success revealed problems that only production experience could expose.
 
@@ -273,4 +273,4 @@ These limitations are why we're building a client-only multipath solution. Sessi
 
 Sessions give us the vocabulary for understanding multipath: slot tables, connection binding, ordered execution. The Linux kernel's transport switch (`xprtmultipath.c`) gives us the infrastructure. Our task is to bridge the gap between the two — to build a multipath NFS client that works with any server, not just servers that implement session trunking.
 
-Chapter 5 examines the multipath landscape in detail and explains the design choices that lead to our approach.
+Chapter 6 examines the multipath landscape in detail and explains the design choices that lead to our approach.

@@ -9,12 +9,13 @@
 | 0 | [Preface](./ch00-preface.md) | Scope, conventions, kernel version reference |
 | 1 | [NFS Protocol Evolution](./ch01-evolution.md) | v2 → v3 → v4 → v4.1 → v4.2, what each version brought |
 | 2 | [Sun RPC Recap](./ch02-sunrpc.md) | RPC protocol, authentication, portmap/rpcbind, transport layers |
-| 3 | [NFSv4 Architecture](./ch03-nfsv4.md) | COMPOUND RPC, operations, delegations, state model, recovery |
-| 4 | [NFSv4.1: Sessions, pNFS, and Trunking](./ch04-nfs41.md) | Session model, parallel NFS layouts, multipath trunking, referrals |
-| 5 | [Multipath NFS and Client-Side Trunking](./ch05-multipath.md) | How session trunking works, address lists, implementation patterns |
-| 6 | [The Linux NFS Client Stack](./ch06-linux-client.md) | Architecture: VFS → NFS → RPC → xprt, module layering, key code paths |
-| 7 | [The Linux RPC Layer (sunrpc.ko)](./ch07-sunrpc-impl.md) | rpc_clnt, rpc_task, xprt transport switch, multipath (xprtmultipath) |
-| 8 | [dnfs: Distributed NFS Design](./ch08-dnfs-design.md) | Clean-room multipath, kernel patch architecture, code walk |
+| 3 | [NFSv3 — How NFS Actually Works](./ch03-nfsv3.md) | Filehandles, operations, WRITE/COMMIT, NLM locking, the stateless model, what's wrong with v3 |
+| 4 | [NFSv4 Architecture](./ch04-nfsv4.md) | COMPOUND RPC, operations, delegations, state model, recovery |
+| 5 | [NFSv4.1: Sessions, pNFS, and Trunking](./ch05-nfs41.md) | Session model, parallel NFS layouts, multipath trunking, referrals |
+| 6 | [Multipath NFS and Client-Side Trunking](./ch06-multipath.md) | How session trunking works, address lists, implementation patterns |
+| 7 | [The Linux NFS Client Stack](./ch07-linux-client.md) | Architecture: VFS → NFS → RPC → xprt, module layering, key code paths |
+| 8 | [The Linux RPC Layer (sunrpc.ko)](./ch08-sunrpc-impl.md) | rpc_clnt, rpc_task, xprt transport switch, multipath (xprtmultipath) |
+| 9 | [dnfs: Distributed NFS Design](./ch09-dnfs-design.md) | Clean-room multipath, kernel patch architecture, code walk |
 | A | [Appendix: On-Wire Protocol Reference](./appendix-wire.md) | XDR primitives, COMPOUND encoding, operation tables |
 
 ## Kernel Version
@@ -23,4 +24,4 @@ This book targets **Linux 7.0.0-14-generic** (Ubuntu 26.04 LTS / "Resolute"). So
 
 ## Related repositories
 
-- [darrenstarr/dnfs](https://github.com/darrenstarr/dnfs) — Kernel patch development
+- [darrenstarr/dnfs](https://github.com/darrentarr/dnfs) — Kernel patch development

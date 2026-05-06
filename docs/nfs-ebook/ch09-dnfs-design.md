@@ -1,4 +1,4 @@
-# Chapter 8: dnfs — The Clean-Room Implementation
+# Chapter 9: dnfs — The Clean-Room Implementation
 
 This is the chapter where everything we've discussed — protocol evolution, RPC architecture, kernel internals, multipath theory — converges into a concrete design.
 

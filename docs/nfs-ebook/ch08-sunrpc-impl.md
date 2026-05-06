@@ -1,4 +1,4 @@
-# Chapter 7: How an RPC Actually Gets Sent — Inside sunrpc.ko
+# Chapter 8: How an RPC Actually Gets Sent — Inside sunrpc.ko
 
 The SunRPC layer is the unsung hero of the NFS stack. The NFS protocol gets the attention — COMPOUND operations, delegations, stateids — but the RPC layer is the engine that makes everything move. Every byte that travels between client and server passes through this code.
 
@@ -456,4 +456,4 @@ Our multipath implementation modifies only three things:
 
 Everything else — the task lifecycle, the XDR encoding, the authentication — stays unchanged. The existing kernel infrastructure handles multipath naturally once the transport switch has multiple transports and the right iterator.
 
-**Next**: Chapter 8 describes the complete dnfs design — patch structure, mount option handling, and the integration points with the existing NFS client.
+**Next**: Chapter 9 describes the complete dnfs design — patch structure, mount option handling, and the integration points with the existing NFS client.

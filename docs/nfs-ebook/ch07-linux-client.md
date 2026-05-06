@@ -1,4 +1,4 @@
-# Chapter 6: The Linux NFS Client Stack — A Journey Through the Code
+# Chapter 7: The Linux NFS Client Stack — A Journey Through the Code
 
 Every NFS operation — every `read()`, `write()`, `open()`, `stat()` — travels through a stack of kernel subsystems before it reaches the wire. Understanding this stack is essential for anyone who wants to modify the NFS client.
 

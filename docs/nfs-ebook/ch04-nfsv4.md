@@ -1,4 +1,4 @@
-# Chapter 3: NFSv4 — The Stateful Revolution
+# Chapter 4: NFSv4 — The Stateful Revolution
 
 If you've worked with filesystems your whole career, you might think the word "stateful" is unremarkable. Of course filesystems are stateful — they keep track of open files, current directory positions, and pending writes. What other kind of filesystem is there?
 
@@ -214,4 +214,4 @@ But the stateful model introduced new challenges:
 - **Duplicate detection**: The per-connection duplicate request cache was fragile
 - **Multipath**: The state model had no concept of multiple paths
 
-NFSv4.1 addressed all three with the session model, which we'll explore in Chapter 4.
+NFSv4.1 addressed all three with the session model, which we'll explore in Chapter 5.
