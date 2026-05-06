@@ -1,0 +1,33 @@
+From: enfs-dkms
+Subject: [PATCH] sunrpc/nfs: export xprt_release + nfs3_procedures for enfs
+
+enfs.ko needs both:
+  - xprt_release() from net/sunrpc/xprt.c (transmit-finalisation
+    helper used in enfs's failover path).
+  - nfs3_procedures[] from fs/nfs/nfs3xdr.c (the NFSv3 procedure
+    table — enfs uses it to dispatch the new EXTEND op).
+
+Both were non-static but un-exported in stock 7.0.
+
+---
+--- a/net/sunrpc/xprt.c
++++ b/net/sunrpc/xprt.c
+@@ -1993,6 +1993,7 @@
+ 	else
+ 		xprt_free_bc_request(req);
+ }
++EXPORT_SYMBOL_GPL(xprt_release);
+ 
+ #ifdef CONFIG_SUNRPC_BACKCHANNEL
+ void
+
+--- a/fs/nfs/nfs3xdr.c
++++ b/fs/nfs/nfs3xdr.c
+@@ -2472,6 +2472,7 @@
+ 	PROC(PATHCONF,		getattr,	pathconf,	0),
+ 	PROC(COMMIT,		commit,		commit,		5),
+ };
++EXPORT_SYMBOL_GPL(nfs3_procedures);
+ 
+ static unsigned int nfs_version3_counts[ARRAY_SIZE(nfs3_procedures)];
+ const struct rpc_version nfs_version3 = {

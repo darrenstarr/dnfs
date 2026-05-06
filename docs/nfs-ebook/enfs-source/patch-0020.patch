@@ -1,0 +1,42 @@
+From: enfs-dkms
+Subject: [PATCH] net/sunrpc/clnt.c: provide rpc_clnt_test_xprt for enfs
+
+OpenEuler kept the older one-shot rpc_clnt_test_xprt(); upstream Linux
+moved to rpc_clnt_setup_test_and_add_xprt(). enfs's pm_ping subsystem
+calls the older API directly.
+
+Re-add the OE-style rpc_clnt_test_xprt() — it just queues an async
+NULL RPC to the named xprt with the supplied call_ops, mimicking
+OE's implementation byte-for-byte. The previous compat shim returned
+0 unconditionally which caused enfs's add_xprt callback to dereference
+an uninitialized rpc_task pointer (NULL deref crash).
+
+---
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -3040,6 +3040,25 @@
+  * @data: a struct rpc_add_xprt_test pointer that holds the test function
+  *        and test function call data
+  */
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++/* enfs needs the older one-shot test+add API. Reimplemented from
++ * OpenEuler OLK-6.6 net/sunrpc/clnt.c. */
++int rpc_clnt_test_xprt(struct rpc_clnt *clnt, struct rpc_xprt *xprt,
++		       const struct rpc_call_ops *ops, void *data, int flags)
++{
++	struct rpc_task *task;
++
++	task = rpc_call_null_helper(clnt, xprt, NULL,
++				    RPC_TASK_SOFT | RPC_TASK_SOFTCONN | flags,
++				    ops, data);
++	if (IS_ERR(task))
++		return PTR_ERR(task);
++	rpc_put_task(task);
++	return 1;
++}
++EXPORT_SYMBOL_GPL(rpc_clnt_test_xprt);
++#endif
++
+ int rpc_clnt_setup_test_and_add_xprt(struct rpc_clnt *clnt,
+ 				     struct rpc_xprt_switch *xps,
+ 				     struct rpc_xprt *xprt,

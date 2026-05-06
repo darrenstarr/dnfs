@@ -1,0 +1,28 @@
+From: enfs-dkms
+Subject: [PATCH] net/sunrpc/clnt.c: export rpc_task_get_next_xprt for enfs
+
+Stock Ubuntu 7.0 already has the function enfs needs
+(rpc_task_get_next_xprt), but it is `static`. enfs's
+fs/nfs/enfs/failover_path.c calls it across module boundaries, so
+we drop `static` and add EXPORT_SYMBOL_GPL.
+
+Same trick that vendored sunrpc.ko itself uses for many helpers; the
+patch is two lines.
+
+---
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -1153,11 +1153,12 @@
+ 	return rpc_task_get_xprt(clnt, xprt);
+ }
+ 
+-static struct rpc_xprt *
++struct rpc_xprt *
+ rpc_task_get_next_xprt(struct rpc_clnt *clnt)
+ {
+ 	return rpc_task_get_xprt(clnt, xprt_iter_get_next(&clnt->cl_xpi));
+ }
++EXPORT_SYMBOL_GPL(rpc_task_get_next_xprt);
+ 
+ static
+ void rpc_task_set_transport(struct rpc_task *task, struct rpc_clnt *clnt)

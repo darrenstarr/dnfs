@@ -1,0 +1,134 @@
+From: enfs-dkms
+Subject: [PATCH] net/sunrpc/xprt.c: enfs multipath hooks (timeout, iostat, servername)
+
+Wires the rpc_multipath_ops_* hooks into the SunRPC xprt layer:
+
+  1. Include sunrpc_enfs_adapter.h.
+
+  2. Two `out_sleep:` paths in xprt_reserve_xprt_cong / xprt_reserve_xprt:
+     call rpc_multipath_ops_adjust_task_timeout() before the actual
+     sleep so enfs can recompute the per-path timeout based on which
+     transport was selected.
+
+  3. xprt_wait_for_buffer_space: same adjust_task_timeout call on
+     xprt->snd_task before flagging XPRT_WRITE_SPACE.
+
+  4. xprt_alloc_slot (where the request slot gets initialised): call
+     rpc_multipath_ops_init_task_req() so enfs can stamp the rqst with
+     its multipath-specific bookkeeping right after xprt_init_majortimeo.
+
+  5. xprt_release: call rpc_multipath_ops_xprt_iostat() so enfs's per-
+     xprt I/O accounting sees every release.
+
+  6. xprt_create_transport: replace the unconditional kstrdup of the
+     servername with rpc_multipath_set_servername (which lets enfs
+     attach a per-name multipath context); also call
+     rpc_multipath_ops_create_xprt() and bail out cleanly if the enfs
+     side fails to allocate.
+
+  7. xprt_destroy: replace kfree(servername) with
+     rpc_multipath_free_servername (it knows whether the name carries
+     enfs metadata that needs cleanup).
+
+All hooks guarded by CONFIG_SUNRPC_ENFS so a non-enfs build is a no-op.
+
+---
+--- a/net/sunrpc/xprt.c
++++ b/net/sunrpc/xprt.c
+@@ -51,6 +51,9 @@
+ #include <linux/sunrpc/bc_xprt.h>
+ #include <linux/rcupdate.h>
+ #include <linux/sched/mm.h>
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++#include <linux/sunrpc/sunrpc_enfs_adapter.h>
++#endif
+ 
+ #include <trace/events/sunrpc.h>
+ 
+@@ -282,6 +285,9 @@
+ out_unlock:
+ 	xprt_clear_locked(xprt);
+ out_sleep:
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_ops_adjust_task_timeout(task, NULL);
++#endif
+ 	task->tk_status = -EAGAIN;
+ 	if (RPC_IS_SOFT(task) || RPC_IS_SOFTCONN(task))
+ 		rpc_sleep_on_timeout(&xprt->sending, task, NULL,
+@@ -348,6 +354,9 @@
+ out_unlock:
+ 	xprt_clear_locked(xprt);
+ out_sleep:
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_ops_adjust_task_timeout(task, NULL);
++#endif
+ 	task->tk_status = -EAGAIN;
+ 	if (RPC_IS_SOFT(task) || RPC_IS_SOFTCONN(task))
+ 		rpc_sleep_on_timeout(&xprt->sending, task, NULL,
+@@ -608,6 +617,9 @@
+  */
+ void xprt_wait_for_buffer_space(struct rpc_xprt *xprt)
+ {
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_ops_adjust_task_timeout(xprt->snd_task, NULL);
++#endif
+ 	set_bit(XPRT_WRITE_SPACE, &xprt->state);
+ }
+ EXPORT_SYMBOL_GPL(xprt_wait_for_buffer_space);
+@@ -1901,6 +1913,10 @@
+ 	req->rq_seqno_count = 0;
+ 	xprt_init_majortimeo(task, req, task->tk_client->cl_timeout);
+ 
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_ops_init_task_req(task, req);
++#endif
++
+ 	trace_xprt_reserve(req);
+ }
+ 
+@@ -1973,6 +1989,9 @@
+ 	}
+ 
+ 	xprt = req->rq_xprt;
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_ops_xprt_iostat(task);
++#endif
+ 	xprt_request_dequeue_xprt(task);
+ 	spin_lock(&xprt->transport_lock);
+ 	xprt->ops->release_xprt(xprt, task);
+@@ -2084,12 +2103,23 @@
+ 		xprt_destroy(xprt);
+ 		return ERR_PTR(-EINVAL);
+ 	}
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	xprt->servername = rpc_multipath_set_servername(args->servername, GFP_KERNEL);
++#else
+ 	xprt->servername = kstrdup(args->servername, GFP_KERNEL);
++#endif
+ 	if (xprt->servername == NULL) {
+ 		xprt_destroy(xprt);
+ 		return ERR_PTR(-ENOMEM);
+ 	}
+ 
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	if (!rpc_multipath_ops_create_xprt(xprt)) {
++		xprt_destroy(xprt);
++		return ERR_PTR(-ENOMEM);
++	}
++#endif
++
+ 	rpc_xprt_debugfs_register(xprt);
+ 
+ 	trace_xprt_create(xprt);
+@@ -2109,7 +2139,11 @@
+ 	rpc_destroy_wait_queue(&xprt->pending);
+ 	rpc_destroy_wait_queue(&xprt->sending);
+ 	rpc_destroy_wait_queue(&xprt->backlog);
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_free_servername(xprt);
++#else
+ 	kfree(xprt->servername);
++#endif
+ 	/*
+ 	 * Destroy any existing back channel
+ 	 */

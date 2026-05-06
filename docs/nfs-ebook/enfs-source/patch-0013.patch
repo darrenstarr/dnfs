@@ -1,0 +1,125 @@
+From: enfs-dkms
+Subject: [PATCH] net/sunrpc/clnt.c: enfs multipath hook callsites
+
+Wires the rpc_multipath_ops_* hooks into the SunRPC client. Eight
+hook sites land in this patch:
+
+  1. Include sunrpc_enfs_adapter.h.
+  2. After successful clnt creation: rpc_multipath_ops_create_clnt()
+     so enfs_adapter can attach per-client multipath state.
+  3. In rpc_shutdown_client, just before rpc_release_client():
+     rpc_multipath_ops_releas_clnt() to drop that state.
+  4. In the per-task xprt-acquisition path: rpc_multipath_ops_inc_queuelen()
+     so enfs's per-xprt queue accounting stays in sync.
+  5. In rpc_task_release_xprt: matching dec_queuelen.
+  6. In rpc_task_set_transport: rpc_multipath_ops_set_transport()
+     when there's an rpc_proc to dispatch.
+  7. In the RPC header encoder: when SUNRPC_ENFS is on, replace the
+     fixed `cl_prog`/`cl_vers` writes with RPC_MULTIPAHT_UPDATE_RPC_PROC
+     (macro from the adapter header) so enfs can rewrite them per task.
+  8. In rpc_clnt_xprt_switch_add_xprt's roundrobin path: prefer
+     rpc_multipath_switch_set_roundrobin (which forwards to the stock
+     helper if no multipath is registered for this clnt).
+
+NOT INCLUDED in this patch (deferred to a follow-up):
+  - case -ETIMEDOUT failover_handle hook (call_status path) — needs
+    more careful Ubuntu-7.0 site-mapping; the OE site assumed a local
+    `failover` boolean we'd need to introduce. Tracked.
+  - case -ETIMEDOUT task_need_call_start_again hook (call_refresh
+    path) — same reason. Tracked.
+
+Both deferred hooks affect failover behaviour but not basic load-balancing
+or initial mount, so a smoke test (mount + read) should work without them.
+
+---
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -38,6 +38,9 @@
+ #include <linux/sunrpc/rpc_pipe_fs.h>
+ #include <linux/sunrpc/metrics.h>
+ #include <linux/sunrpc/bc_xprt.h>
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++#include <linux/sunrpc/sunrpc_enfs_adapter.h>
++#endif
+ #include <trace/events/sunrpc.h>
+ 
+ #include "sunrpc.h"
+@@ -486,6 +489,10 @@
+ 		}
+ 	}
+ 
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_ops_create_clnt(args, clnt);
++#endif
++
+ 	clnt->cl_softrtry = 1;
+ 	if (args->flags & (RPC_CLNT_CREATE_HARDRTRY|RPC_CLNT_CREATE_SOFTERR)) {
+ 		clnt->cl_softrtry = 0;
+@@ -961,6 +968,10 @@
+ 	wait_event_timeout(destroy_wait,
+ 			   atomic_read(&clnt->cl_task_count) == 0, 1 * HZ);
+ 
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_ops_releas_clnt(clnt);
++#endif
++
+ 	rpc_release_client(clnt);
+ }
+ EXPORT_SYMBOL_GPL(rpc_shutdown_client);
+@@ -1088,6 +1099,9 @@
+ 
+ 	if (!xprt)
+ 		return NULL;
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_ops_inc_queuelen(xprt);
++#endif
+ 	rcu_read_lock();
+ 	xps = rcu_dereference(clnt->cl_xpi.xpi_xpswitch);
+ 	atomic_long_inc(&xps->xps_queuelen);
+@@ -1102,6 +1116,9 @@
+ {
+ 	struct rpc_xprt_switch *xps;
+ 
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_ops_dec_queuelen(xprt);
++#endif
+ 	atomic_long_dec(&xprt->queuelen);
+ 	rcu_read_lock();
+ 	xps = rcu_dereference(clnt->cl_xpi.xpi_xpswitch);
+@@ -1162,6 +1179,11 @@
+ static
+ void rpc_task_set_transport(struct rpc_task *task, struct rpc_clnt *clnt)
+ {
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	if (task->tk_msg.rpc_proc)
++		rpc_multipath_ops_set_transport(task, clnt);
++#endif
++
+ 	if (task->tk_xprt) {
+ 		if (!(test_bit(XPRT_OFFLINE, &task->tk_xprt->state) &&
+ 		      (task->tk_flags & RPC_TASK_MOVEABLE)))
+@@ -2661,8 +2683,12 @@
+ 	*p++ = req->rq_xid;
+ 	*p++ = rpc_call;
+ 	*p++ = cpu_to_be32(RPC_VERSION);
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	RPC_MULTIPAHT_UPDATE_RPC_PROC(task, p, clnt);
++#else
+ 	*p++ = cpu_to_be32(clnt->cl_prog);
+ 	*p++ = cpu_to_be32(clnt->cl_vers);
++#endif
+ 	*p   = cpu_to_be32(task->tk_msg.rpc_proc->p_proc);
+ 
+ 	error = rpcauth_marshcred(task, xdr);
+@@ -3133,7 +3159,11 @@
+ 				connect_timeout,
+ 				reconnect_timeout);
+ 
++#if IS_ENABLED(CONFIG_SUNRPC_ENFS)
++	rpc_multipath_switch_set_roundrobin(clnt, xps);
++#else
+ 	rpc_xprt_switch_set_roundrobin(xps);
++#endif
+ 	if (setup) {
+ 		ret = setup(clnt, xps, xprt, data);
+ 		if (ret != 0)
