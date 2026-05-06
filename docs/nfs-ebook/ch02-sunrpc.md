@@ -1,168 +1,92 @@
-# Chapter 2: Sun RPC Recap
+# Chapter 2: Sun RPC — The Plumbing Underneath
 
-> This chapter is a reference for readers already familiar with ONC RPC. It highlights the structures and behaviours most relevant to the NFS client implementation in Linux.
+If the NFS protocol is the house, Sun RPC is the foundation, the plumbing, and the electrical wiring. You don't see it when everything works — you see the polished rooms (file operations) and the fixtures (mount points). But when something breaks, you discover just how much of the system depends on the RPC layer working correctly.
 
-## 2.1 RPC Message Structure
+This chapter is not a tutorial on RPC programming. It's an explanation of the specific mechanisms that NFS depends on — the ones that will matter when we start modifying the kernel's RPC layer to support multipath.
 
-Every RPC message follows this framing:
+## The RPC Contract
 
-```xdr
-struct rpc_msg {
-    unsigned int  xid;          // transaction ID
-    enum msg_type mtype;        // CALL (0) or REPLY (1)
-    union body {
-        call_body  cbody;       // if CALL
-        reply_body rbody;       // if REPLY
-    };
-};
-```
+Remote Procedure Call is a simple idea with profound implications. The caller invokes a function as if it were local, but the function executes on a different machine. The RPC layer handles all the messy details: serializing arguments, transmitting them over a network, waiting for a response, deserializing results, and returning them to the caller.
 
-### CALL body
+The contract between caller and callee is expressed in three numbers:
 
-```xdr
-struct call_body {
-    unsigned int  rpcvers;      // must be 2
-    unsigned int  prog;         // program number
-    unsigned int  vers;         // version number
-    unsigned int  proc;         // procedure number
-    opaque_auth   cred;         // authentication credential
-    opaque_auth   verf;         // authentication verifier
-};
-```
+- **Program number** — identifies the service (NFS is 100003, portmapper/rpcbind is 100000)
+- **Version number** — identifies the protocol version (NFS has versions 2, 3, 4)
+- **Procedure number** — identifies the operation (in NFSv3: READ is 6, WRITE is 7)
 
-### REPLY body
+Every RPC is either a **CALL** — "here are my arguments, give me results" — or a **REPLY** — "here are your results, or here's why I couldn't produce them." The caller assigns a **transaction ID** (xid) to every CALL, and the REPLY echoes the xid so the caller can match responses to requests.
 
-```xdr
-union reply_body switch (enum reply_stat stat) {
-    case RPC_MSG_ACCEPTED:
-        accepted_reply areply;
-    case RPC_MSG_DENIED:
-        rejected_reply rreply;
-};
-```
+This is important for our purposes because the xid is how the kernel's RPC layer tracks in-flight operations. When we have multiple transports, each with multiple in-flight RPCs, the xid namespace must be managed carefully.
 
-## 2.2 XDR — eXternal Data Representation
+## XDR: The Universal Translator
 
-XDR is the serialization layer. Key properties:
+The NFS protocol doesn't use JSON, Protocol Buffers, or any modern serialization format. It uses **eXternal Data Representation (XDR)**, a format specified in RFC 4506.
 
-- **Big-endian byte order** (network byte order) — no byte-order negotiation
-- **4-byte alignment** — every data element starts at a 4-byte boundary
-- **Variable-length primitive** — length-prefixed (4 bytes) followed by data, padded to 4 bytes
+XDR has a distinctive personality:
 
-```mermaid
-flowchart LR
-    subgraph XDR Encoding
-        I[Integer 42] -->|encode| E1[00 00 00 2A]
-        S[String 'nfs'] -->|encode| E2[00 00 00 03 6E 66 73 00]
-        F[Fixed data 8 bytes] -->|encode| E3[8 bytes, no pad]
-    end
-```
+**Big-endian byte order**, always. There's no negotiation, no "native byte order" optimization. Every byte on the wire has a defined position. This is the opposite of what modern systems typically do — they'd rather negotiate byte order once and use native ordering for the rest of the conversation. But XDR predates that thinking, and by the time the industry realized that negotiation was worth doing, NFSv4 was already committed to XDR.
 
-## 2.3 Authentication Flavours
+**Four-byte alignment.** Every data element starts at a position that's a multiple of 4 bytes from the beginning of the message. If you send a 1-byte value followed by a 4-byte value, the sender pads the 1-byte value with 3 unused bytes. This wastes bandwidth but makes the encoding and decoding logic simple and fast — you can cast directly from a buffer to a structure.
 
-| Flavour | Number | Usage |
-|---------|--------|-------|
-| AUTH_NONE | 0 | No authentication |
-| AUTH_SYS | 1 | Unix UID/GID (legacy, NFSv3 default) |
-| AUTH_SHORT | 2 | Shorthand for AUTH_SYS (obsolete) |
-| RPCSEC_GSS | 6 | Kerberos 5, SPKM, LIPKEY (mandatory for NFSv4) |
+**Variable-length arrays are length-prefixed.** An array of N elements is sent as a 4-byte length (N) followed by N elements. Strings are sent as a 4-byte byte count followed by the characters, followed by zero-padding to the next 4-byte boundary.
 
-In NFSv4, `AUTH_SYS` is deprecated. Clients and servers MUST support RPCSEC_GSS negotiation. In practice, many deployments still use `AUTH_SYS` (`sec=sys`) for simplicity.
+The simplicity of XDR is a design choice: **the protocol should be easy to implement correctly.** Complex serialization formats create subtle bugs. XDR is simple enough that you can implement a correct encoder and decoder in an afternoon. This matters when you're porting NFS to a new operating system — and Sun wanted NFS to run everywhere.
 
-## 2.4 Transport and Binding
+## Authentication: How the Server Knows Who You Are
 
-### Portmapper / rpcbind
+Every RPC carries two authentication fields: a **credential** (who the caller claims to be) and a **verifier** (proof that the credential is genuine). Different authentication "flavours" use these fields differently.
 
-Before NFSv4, clients needed to discover service ports:
+### AUTH_SYS (Unix Authentication)
 
-```mermaid
-sequenceDiagram
-    participant C as NFS Client
-    participant PM as Portmapper (111)
-    participant M as mountd
-    participant N as nfsd (2049)
-    C->>PM: GETPORT(mount, v3)
-    PM-->>C: Port 34567
-    C->>M: MOUNT(export)
-    M-->>C: Filehandle + FS info
-    C->>PM: GETPORT(nfs, v3)
-    PM-->>C: Port 2049
-    C->>N: FSINFO, PATHCONF,...
-```
+The simplest flavour: the credential contains a UID, GID, and supplementary group list. The verifier is empty. There's no proof of identity — the client simply asserts who it is. An attacker who can forge packets can impersonate any user.
 
-NFSv4 eliminates this: all operations happen on port 2049. The server exports are discovered via GETATTR(fs_locations) or the /proc/fs/nfsd/ interface.
+AUTH_SYS is still the most widely used NFS authentication mechanism because it's simple and because most NFS deployments trust their network. The Linux kernel's `auth_unix.c` module implements it in about 200 lines of code.
 
-### Connection Model
+### RPCSEC_GSS (Cryptographic Authentication)
 
-```mermaid
-flowchart TD
-    subgraph NFSv3
-        C1[Client] -->|Stateless| S1[Server]
-        C1 -->|NLM locks| S1
-        C1 -.->|NSM callback| C1
-    end
-    subgraph NFSv4
-        C2[Client] -->|COMPOUND RPC| S2[Server]
-        C2 <-->|Backchannel| S2
-        C2 -->|Connection trunking| S2
-    end
-```
+RPCSEC_GSS wraps the RPC body in a Generic Security Services (GSS-API) layer that provides authentication, integrity, or privacy (encryption). The most common mechanism is Kerberos 5.
 
-## 2.5 Idempotency and Duplicate Detection
+With RPCSEC_GSS, the credential is a GSS token (typically a Kerberos service ticket), and the verifier is a cryptographic checksum of the RPC body. The server validates the service ticket, uses it to verify the checksum, and only then processes the request.
 
-- **NFSv3**: The client retransmits on timeout. Non-idempotent operations (REMOVE, RENAME, CREATE) can execute multiple times. Servers maintain a **duplicate request cache (DRC)** per connection.
-- **NFSv4**: The COMPOUND RPC may contain both idempotent and non-idempotent operations. The server uses a **slot-based reply cache** (see Chapter 4).
-- **NFSv4.1**: The session slot table provides deterministic duplicate detection and ordered operation processing.
+NFSv4 **requires** RPCSEC_GSS support (the "MUST" in RFC 7530). In practice, `sec=sys` is still widely used because Kerberos infrastructure is complex to deploy. But the requirement means that every NFSv4 implementation — including ours — must have correct GSS-API integration.
 
-## 2.6 The Linux SunRPC Implementation
+### What Authentication Means for Multipath
 
-The Linux kernel's SunRPC layer (`net/sunrpc/`) provides:
+When we bind multiple transports to a single mount, each transport creates its own TCP connection. Each connection independently negotiates authentication. The server must see the same identity on all connections for them to participate in the same multipath set.
 
-| Component | File(s) | Role |
-|-----------|---------|------|
-| `rpc_clnt` | `clnt.c` | RPC client handle, manages transports |
-| `rpc_task` | `sched.c` | Single RPC execution context, state machine |
-| `rpc_xprt` | `xprt.c` | Transport abstraction (TCP, UDP, RDMA) |
-| `xprtmultipath` | `xprtmultipath.c` | Transport switch — the multipath foundation |
-| `auth` | `auth.c`, `auth_null.c`, `auth_unix.c`, `auth_tls.c` | Credential management and RPC-level auth |
+This is straightforward with AUTH_SYS (the UID/GID is the same regardless of which TCP connection carries the RPC). With RPCSEC_GSS, each connection needs its own Kerberos session — and the server must recognize that sessions A, B, and C all belong to the same client principal.
 
-```mermaid
-flowchart LR
-    subgraph sunrpc.ko
-        CT[rpc_clnt] --> XS[xprt_switch]
-        XS --> X1[xprt 1 : TCP]
-        XS --> X2[xprt 2 : TCP]
-        XS --> X3[xprt N : TCP]
-        CT --> TK[rpc_task]
-        TK -->|pick xprt| XS
-    end
-    subgraph nfs.ko
-        NF[VFS NFS ops] --> CT
-    end
-```
+NFSv4.1 session trunking handles this through the `BIND_CONN_TO_SESSION` operation, which explicitly links a new connection to an existing authenticated session. Our client-only multipath approach handles it at the `rpc_clnt` level — all transports under the same client share the same authentication context.
 
-The `xprt_switch` (`xprtmultipath.c`) is the key data structure for multipath — it holds an ordered list of transports and an iterator (`xps_iter_ops`) that selects the next transport for each RPC. This is the hook point for custom dispatch policies (round-robin, weighted, etc.).
+## The Portmapper Dance (NFSv3)
 
-### Transport Switch Iterator
+Before NFSv4, finding the NFS server was a two-step process:
 
-```c
-struct xprt_switch_iter_ops {
-    struct rpc_xprt *(*xps_iter_init)(struct rpc_xprt_switch *);
-    struct rpc_xprt *(*xps_iter_next)(struct rpc_xprt_switch *);
-};
-```
+1. Ask the portmapper (port 111) what port the NFS server is on
+2. Ask the NFS server to perform operations
 
-The NFSv4.1 session trunking implementation uses this interface. Our dnfs project will extend it for client-configured multipath (see Chapter 8).
+The portmapper protocol is itself an RPC service, which means the client makes an RPC call to program 100000, procedure 3 (GETPORT), asking "what port is program 100003, version 3, protocol TCP running on?" The portmapper responds with a port number, and the client opens a new connection to that port.
 
-## 2.7 Summary of Key Differences
+This dance happens for each service: NFS, mountd, NLM, NSM, and status. Each on a different port. Each requiring a separate portmapper lookup. Each creating a firewall configuration nightmare.
 
-| Aspect | NFSv3 | NFSv4 | NFSv4.1 |
-|--------|-------|-------|---------|
-| RPC version | 2 | 2 | 2 |
-| Program | 100003 (NFS) + 100021 (NLM) | 100003 (NFS) | 100003 (NFS) |
-| Port | 2049 + random (mountd, NLM) | 2049 | 2049 |
-| Transport | TCP/UDP | TCP | TCP (RDMA optional) |
-| Auth | AUTH_SYS typical | RPCSEC_GSS required | RPCSEC_GSS required |
-| Duplicate detection | DRC per connection | Slot table per client | Slot table per session |
-| Callback | Separate connection | Inline via backchannel | Backchannel (reliable) |
-| Multipath | None | None | Session trunking |
+NFSv4 eliminated this entirely. Everything goes over port 2049. The server exports are discovered through the NFSv4 protocol itself — `GETATTR(fs_locations)` returns a list of server paths, and `PUTROOTFH` starts a namespace traversal that reveals all available exports.
+
+For our multipath work, the important point is that **NFSv4's single-port model is friendlier to multipath**. With NFSv3, every extra transport would potentially need its own mountd and NLM connections. With NFSv4, one port, one service, one connection model.
+
+## The Linux SunRPC Implementation: The Architecture
+
+The Linux kernel's SunRPC implementation (`net/sunrpc/`) is organized in layers:
+
+**At the top**, the `rpc_clnt` structure represents a connection to a remote RPC service. It holds the server's address, the authentication flavour, and a reference to the transport switch. The NFS client creates one `rpc_clnt` per server mount, and all NFS operations flow through it.
+
+**In the middle**, the `rpc_task` represents a single RPC in flight. It tracks the operation state, manages retransmission, and handles the transition from "request queued" to "reply received." The task scheduler (`sched.c`) manages concurrency — multiple tasks can be in flight simultaneously, up to the slot limit.
+
+**At the bottom**, the `rpc_xprt` represents a transport — almost always a TCP connection. The transport handles the raw send/receive of RPC messages. Multiple transports can be bound to the same `rpc_clnt` through the **transport switch** (`xprt_switch` in `xprtmultipath.c`).
+
+This layering is what makes client-side multipath possible. The NFS client sends operations to the `rpc_clnt`. The `rpc_clnt` delegates to the transport switch. The transport switch maintains a list of transports and selects one for each operation. The selection policy is defined by the `xps_iter_ops` function pointer. Install a new iterator — like a round-robin selector — and the RPCs spread across transports automatically.
+
+## What You Need to Remember
+
+The RPC layer is the foundation. When we add multipath to the NFS client, we're modifying the transport switch's iterator — not the NFS protocol itself, not the authentication layer, not the COMPOUND operation builder. The beauty of the layered design is that multipath is largely an RPC-layer concern.
+
+In the next chapter, we climb up from the foundation to see how NFSv4 uses this RPC layer to manage state. The state model is where NFSv4 differs most dramatically from v3, and understanding it is essential before we can understand how multipath interacts with state management.

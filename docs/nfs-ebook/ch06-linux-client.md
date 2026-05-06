@@ -1,230 +1,211 @@
-# Chapter 6: The Linux NFS Client Stack
+# Chapter 6: The Linux NFS Client Stack — A Journey Through the Code
 
-## 6.1 Module Architecture
+Every NFS operation — every `read()`, `write()`, `open()`, `stat()` — travels through a stack of kernel subsystems before it reaches the wire. Understanding this stack is essential for anyone who wants to modify the NFS client.
 
-The Linux NFS client is spread across several kernel modules:
+This chapter traces the journey of a single `read()` call from a userspace program to the network interface, explaining what each layer contributes and where our multipath changes fit.
 
-```mermaid
-flowchart TD
-    subgraph userspace
-        VFS[VFS syscalls: open, read, write]
-    end
-    subgraph kernel
-        VFS --> NFS[nfs.ko]
-        NFS --> NFSV2[nfsv2.ko]
-        NFS --> NFSV3[nfsv3.ko]
-        NFS --> NFSV4[nfsv4.ko]
-        NFSV4 --> PNFS[pNFS layouts]
-        NFS --> NFSCOMMON[grace.ko, nfs_acl.ko]
-        NFS --> RPC[sunrpc.ko]
-        RPC --> XPRTS[xprt: tcp, rdma]
-        NFSV4 --> LOCKD[lockd.ko]
-        LOCKD --> RPC
-    end
-```
+## The Layers
 
-| Module | File | Size (~) | Role |
-|--------|------|----------|------|
-| `sunrpc.ko` | `net/sunrpc/` | 843 KB | RPC transport, scheduling, auth |
-| `nfs.ko` | `fs/nfs/` | 640 KB | NFS core (v2 common, superblock, state) |
-| `nfsv2.ko` | `fs/nfs/nfs2super.o` etc | 30 KB | NFSv2 protocol |
-| `nfsv3.ko` | `fs/nfs/nfs3*.o` | 60 KB | NFSv3 protocol |
-| `nfsv4.ko` | `fs/nfs/nfs4*.o` | 1.2 MB | NFSv4 protocol + state management |
-| `lockd.ko` | `fs/lockd/` | 150 KB | NLM lock manager (v3, v4) |
-| `nfs_acl.ko` | `fs/nfs_common/` | 12 KB | NFSACL protocol |
-| `grace.ko` | `fs/nfs_common/` | 16 KB | Lease grace period management |
-
-## 6.2 Key Source Files
-
-### VFS Interface (`fs/nfs/`)
-
-| File | Purpose |
-|------|---------|
-| `super.c` | Superblock operations, mount/umount entry |
-| `fs_context.c` | Filesystem context, mount option parsing, `-o` parameters |
-| `client.c` | `nfs_client` creation, server address management |
-| `inode.c` | Inode operations, attribute cache |
-| `dir.c` | Directory operations (lookup, readdir, create, unlink) |
-| `file.c` | File operations (read, write, mmap, flush) |
-| `direct.c` | Direct I/O path (O_DIRECT) |
-| `write.c` | Buffered write path, commit coordination |
-| `read.c` | Buffered read path, readahead |
-| `namespace.c` | NFS namespace operations (cross-mount traversal) |
-| `getroot.c` | Root filehandle resolution |
-| `internal.h` | Internal data structures shared across NFS files |
-
-### NFSv4 (`fs/nfs/`)
-
-| File | Purpose |
-|------|---------|
-| `nfs4proc.c` | NFSv4 COMPOUND operation construction and dispatch |
-| `nfs4state.c` | State management (client ID, opens, locks, delegations) |
-| `nfs4xdr.c` | NFSv4 XDR encoders and decoders |
-| `nfs4client.c` | NFSv4 client initialization, session setup |
-| `nfs4session.c` | Session slot table management (v4.1) |
-| `nfs4renewd.c` | Lease renewal daemon |
-| `nfs4namespace.c` | Migration and referral handling |
-| `delegation.c` | Delegation management |
-| `callback.c` | Callback server (NFSv4.0) |
-| `callback_xdr.c`, `callback_proc.c` | Callback XDR and procedure handlers |
-
-### SunRPC (`net/sunrpc/`)
-
-| File | Purpose |
-|------|---------|
-| `clnt.c` | `rpc_clnt` creation, management, `rpc_run_task` entry |
-| `sched.c` | `rpc_task` scheduler, RPC execution pipeline |
-| `xprt.c` | Transport creation, connection management |
-| `xprtsock.c` | TCP and UDP socket transport implementation |
-| `xprtmultipath.c` | Transport switch (multipath foundation) |
-| `auth.c` | RPC authentication framework |
-| `auth_null.c`, `auth_unix.c`, `auth_tls.c` | Auth flavour implementations |
-
-### Key Headers (`include/linux/`)
-
-| Header | Purpose |
-|--------|---------|
-| `nfs_fs.h` | NFS filesystem superblock/inode structures |
-| `nfs_fs_sb.h` | `nfs_server`, `nfs_client` structures |
-| `nfs_xdr.h` | NFS protocol XDR structures |
-| `nfs4.h` | NFSv4 protocol constants and types |
-| `sunrpc/clnt.h` | `rpc_clnt`, `rpc_create_args` |
-| `sunrpc/sched.h` | `rpc_task`, `rpc_task_setup` |
-| `sunrpc/xprt.h` | `rpc_xprt`, transport operations |
-| `sunrpc/xprtmultipath.h` | `rpc_xprt_switch`, multipath interface |
-
-## 6.3 The Mount Path
-
-```mermaid
-sequenceDiagram
-    participant U as mount(8)
-    participant V as VFS
-    participant FC as fs_context.c
-    participant SUP as super.c
-    participant CLI as client.c
-    participant RPC as sunrpc
-    U->>V: mount -t nfs -o vers=4.1 server:/export /mnt
-    V->>FC: nfs_init_fs_context
-    FC->>FC: nfs_parse_source (split server:/export)
-    FC->>FC: nfs_fs_context_parse_param (per option)
-    FC->>FC: nfs_validate_text_mount_data
-    V->>SUP: nfs_get_tree
-    SUP->>SUP: nfs_get_tree_common
-    SUP->>CLI: nfs_init_server / nfs_create_rpc_client
-    CLI->>RPC: rpc_create (build rpc_clnt + main xprt)
-    SUP->>SUP: nfs_fill_super, nfs_get_root
-    SUP-->>V: superblock + root dentry
-    V-->>U: mount point established
-```
-
-## 6.4 The RPC Dispatch Path
+From top to bottom, the NFS client stack has five layers:
 
 ```mermaid
 flowchart TD
-    F[File operation: nfs_file_read] --> N4[nfs4_proc_read]
-    N4 --> PA[alloc nfs_entry + page array]
-    PA --> X[XDR encode: nfs4_xdr_enc_read]
-    X --> RPC[rpc_run_task]
-    RPC --> RPCS[rpc_task scheduler]
-    RPCS --> PICK{nfs_xprt_pick}
-    PICK -->|single xprt| X1[xprt_sendmsg]
-    PICK -->|multipath switch| XS[xprt_switch_find]
-    XS -->|iter_ops| XPRT[rpc_xprt selected]
-    XPRT --> X1
-    X1 --> TCP[tcp_sendmsg]
-    TCP --> WAIT[wait for reply]
-    WAIT --> RECV[tcp_recvmsg → sk_buff]
-    RECV --> DECODE[XDR decode reply]
-    DECODE --> DONE[complete, wake caller]
+    subgraph Userspace
+        APP[Application: read(fd, buf, 4096)]
+    end
+    subgraph VFS
+        V[VFS: generic_file_read]
+        V --> VM[Page cache lookup]
+        V --> N[Need to read from NFS server]
+    end
+    subgraph NFS Client (nfs.ko + nfsv4.ko)
+        NFS[nfs_file_read]
+        NFS --> N4[nfs4_proc_read]
+        N4 --> C[Construct COMPOUND RPC]
+        C --> X[XDR encode arguments]
+    end
+    subgraph SunRPC (sunrpc.ko)
+        RPC[rpc_run_task]
+        RPC --> SCHED[rpc_task scheduler]
+        SCHED --> PICK[Which xprt?]
+        PICK --> XMIT[xprt_sendmsg]
+    end
+    subgraph Transport
+        XMIT --> TCP[tcp_sendmsg]
+        TCP --> NIC[Network Interface]
+    end
 ```
 
-## 6.5 The Transport Switch (xprtmultipath)
+## Step 1: VFS — The Virtual Filesystem Switch
 
-The `rpc_xprt_switch` is the central data structure for multipath:
+The journey begins when an application calls `read()`. The C library invokes the `sys_read` system call, which enters the kernel and hits the **Virtual Filesystem Switch** (VFS).
+
+The VFS doesn't know about NFS. It doesn't know about EXT4, BTRFS, or XFS either. It has a generic model of what a filesystem is: directories containing files, files containing bytes, each file identified by an inode. Every filesystem — local or network — registers a set of operations that the VFS calls.
+
+For a read operation, the VFS:
+
+1. Looks up the file's inode (which it already has from the `open()` call)
+2. Checks that the process has read permission
+3. Checks the **page cache** — a kernel-wide cache of recently-read file data
+4. If the data is in cache, returns it immediately (no network access at all!)
+5. If the data is not in cache (a **page fault**), calls the filesystem's `readpage` operation
+
+This caching is critical for NFS performance. An NFS read that hits the page cache costs microseconds. A read that misses and hits the wire costs milliseconds — 100-1000× more.
+
+Caching is also where NFSv4 delegations matter. A write delegation tells the VFS: "you can cache writes without sending them to the server." A read delegation tells the VFS: "you can cache reads without checking with the server." Without delegations, the VFS must periodically check with the server (attribute cache validation) to ensure cached data hasn't been modified by another client.
+
+## Step 2: NFS Client — Translating VFS Operations to Protocol Operations
+
+When the VFS decides it needs to read from the server, it calls `nfs_file_read()` in `fs/nfs/file.c`. This function:
+
+1. Resolves the file's `nfs_open_context` (which contains the stateid from the OPEN operation)
+2. Determines whether the read is buffered (through the page cache) or direct (O_DIRECT)
+3. For a buffered read: calls `nfs_pagecache_get_page()` → `nfs_readpage()` → `nfs_readpage_async()`
+4. For a direct read: calls `nfs_direct_read()` → `nfs_direct_read_schedule_iovec()` → `nfs_direct_read_schedule_segment()`
+
+The buffered read path (`read.c`) is where most reads land. It works with fixed-size pages (typically 4 KB) and coalesces adjacent pages into larger RPC requests.
+
+The direct read path (`direct.c`) is used by databases and other applications that manage their own caching. It translates the userspace buffer directly into RPC requests, bypassing the page cache entirely.
+
+Both paths eventually call into the protocol-specific read function. For NFSv4, that's `nfs4_proc_read()` in `fs/nfs/nfs4proc.c`. For NFSv3, it's `nfs3_proc_read()` in `fs/nfs/nfs3proc.c`.
+
+The protocol-specific function does two things:
+
+**Construct a COMPOUND RPC.** For NFSv4, the read operation is part of a compound that may include other operations (like GETATTR to refresh file attributes). The compound is built as a `struct nfs_pgio_header` containing all the arguments needed for the RPC.
+
+**Encode the arguments into XDR.** The `nfs4_xdr_enc_read()` function in `nfs4xdr.c` translates the compound into the wire-format XDR byte stream. Every field — operation number, stateid, offset, count — is encoded in big-endian order, padded to 4-byte boundaries.
+
+## Step 3: Sun RPC — Scheduling and Dispatch
+
+The encoded RPC message is handed to the SunRPC layer via `rpc_run_task()`. This creates an `rpc_task` — a kernel structure that represents a single RPC in flight.
+
+The task enters the RPC scheduler. The scheduler's job is to manage concurrency: each transport can have multiple RPCs in flight simultaneously (up to the slot limit), but they must be queued and dequeued in an orderly fashion.
+
+Here's where our multipath changes matter. The scheduler calls `rpc_task_get_next_xprt()` to determine which transport should carry this RPC. In the stock kernel, this function returns the one and only transport. In our modified kernel, it calls the transport switch iterator — which returns the next transport in round-robin order.
 
 ```c
-struct rpc_xprt_switch {
-    spinlock_t                xps_lock;
-    struct list_head          xps_xprt_list;     // list of rpc_xprt
-    struct rpc_xprt_iter_ops *xps_iter_ops;      // dispatch policy
-    unsigned int              xps_nxprts;         // total transports
-    unsigned int              xps_nactive;        // active transports
-    // ...
-};
-```
-
-### Adding a Transport
-
-```c
-int xprt_switch_add_xprt(struct rpc_xprt_switch *xps, struct rpc_xprt *xprt)
+// Stock kernel: always returns the same transport
+struct rpc_xprt *xprt_iter_default_next(struct rpc_xprt_switch *xps)
 {
-    spin_lock(&xps->xps_lock);
-    list_add_tail(&xprt->xprt_switch, &xps->xps_xprt_list);
-    xps->xps_nxprts++;
-    if (xprt_connected(xprt))
-        xps->xps_nactive++;
-    spin_unlock(&xps->xps_lock);
-    return 0;
+    // There's only one. Return it.
+    return list_first_entry(&xps->xps_xprt_list, struct rpc_xprt, xprt_switch);
+}
+
+// Multipath kernel: rotates through all transports
+struct rpc_xprt *enfs_xprt_round_robin_next(struct rpc_xprt_switch *xps)
+{
+    struct rpc_xprt *xprt;
+    unsigned int i, start = atomic_inc_return(&rr_count);
+
+    // Scan starting from the rotating counter
+    i = 0;
+    list_for_each_entry(xprt, &xps->xps_xprt_list, xprt_switch) {
+        if (i++ < start % xps->xps_nxprts)
+            continue;
+        if (xprt_connected(xprt))
+            return xprt;
+    }
+    // Fallback: any live transport
+    list_for_each_entry(xprt, &xps->xps_xprt_list, xprt_switch) {
+        if (xprt_connected(xprt))
+            return xprt;
+    }
+    return NULL; // All paths dead
 }
 ```
 
-### Selecting the Next Transport
+## Step 4: Transport — Sending and Receiving Bytes
 
-The iterator abstracts path selection:
+The transport (`rpc_xprt`) is the interface between the RPC layer and the network. For TCP mounts (the common case), the transport wraps a kernel socket structure.
 
-```c
-struct rpc_xprt_iter_ops {
-    struct rpc_xprt *(*xps_iter_init)(struct rpc_xprt_switch *);
-    struct rpc_xprt *(*xps_iter_next)(struct rpc_xprt_switch *);
-};
+When the scheduler selects a transport, it calls `xprt_sendmsg()`:
+
+1. The RPC message is copied into the transport's send buffer
+2. The transport calls `tcp_sendmsg()` on its kernel socket
+3. The kernel TCP stack fragments the data, adds TCP headers, and queues it for the NIC
+4. The NIC DMA's the data from system memory and transmits it on the wire
+
+On the receive side:
+
+1. The NIC receives a packet and DMA's it into a kernel buffer
+2. The TCP stack reassembles the byte stream and delivers it to the socket
+3. The transport's receive handler is called
+4. The transport matches the response to the waiting `rpc_task` via the XID
+5. The task is woken and the reply is decoded
+
+### What Happens on Timeout?
+
+If no reply arrives within the timeout interval:
+
+1. The `rpc_task`'s timer fires
+2. The scheduler marks the operation as timed out
+3. If retransmissions remain, the task is requeued and sent again — potentially on a **different transport**
+4. If all retransmissions are exhausted, the task fails with -ETIMEDOUT
+
+In our multipath implementation, step 3 is where failover happens. The transport switch iterator selects the next **live** transport when a retry is scheduled. If all transports have failed, the operation returns an error to the application — just as a single-path NFS mount does when its only path fails.
+
+```mermaid
+sequenceDiagram
+    participant T as rpc_task
+    participant SW as xprt_switch
+    participant X1 as xprt 1
+    participant X2 as xprt 2
+    T->>SW: Pick transport for dispatch
+    SW->>X1: xprt 1 selected
+    X1-->>T: Timeout (no reply)
+    T->>T: Mark as retransmit
+    T->>SW: Pick transport for retransmit
+    SW->>X2: xprt 2 selected (skipping dead xprt 1)
+    X2-->>T: Reply received
+    T->>T: Complete successfully
 ```
 
-The default iterator (`xprt_iter_default`) simply returns the only transport. The multipath iterator (`enfs_xprt_iter_roundrobin`) rotates through live transports.
+The key insight: **the application doesn't know that a retransmit happened**. It sees a completed read with correct data. The multipath layer absorbed the transport failure transparently.
 
-## 6.6 Module Build Dependencies
+## Step 5: Back Up — Decoding the Response
+
+The response follows the reverse path:
+
+1. The transport delivers the reply bytes to the `rpc_task`
+2. The task's callback is called — for NFS, this decodes the XDR reply
+3. The decoded data is written into the page cache or userspace buffer
+4. The VFS completes the read, returning the byte count to the application
+
+From the application's perspective, a `read()` that required an NFS remote operation took slightly longer than a cached read — typically 0.5-5 milliseconds instead of 1-10 microseconds. The application has no idea which transport carried the request, which server IP it went to, or whether there was a retransmission.
+
+This transparency is by design. The whole point of the layered architecture is that each layer can change its internal behavior without requiring changes in the layers above.
+
+## Where Our Changes Land
+
+Our multipath changes touch three areas of this stack:
+
+**Option parsing** (`fs/nfs/fs_context.c`): Add `remoteaddrs=` and `localaddrs=` mount options. This is a pure addition — no existing code is modified.
+
+**Transport instantiation** (new module): After `rpc_clnt` creation, iterate the address list and create additional transports. This is a new code path that runs after the existing `rpc_create()` returns.
+
+**Transport selection** (`net/sunrpc/xprtmultipath.c`): Replace the default `xps_iter_ops` with a multipath-aware iterator. This is a modification to a critical code path, but it's minimal — we change a function pointer and the existing infrastructure handles the rest.
+
+Everything else — the NFS protocol layer, the VFS interface, the TCP transport — stays unchanged. This is the beauty of the layered kernel architecture.
+
+## Summary of the Code Journey
 
 ```mermaid
 flowchart TD
-    SUN[sunrpc.ko: clnt, xprt, sched, auth]
-    LOCK[lockd.ko: NLM protocol]
-    GRACE[grace.ko: lease tracking]
-    NACL[nfs_acl.ko: ACL protocol]
-    NETFS[netfs.ko: network fs helpers]
-    NFS[nfs.ko: super, client, inode, dir, file]
-    NFV2[nfsv2.ko: proc, xdr]
-    NFV3[nfsv3.ko: proc, xdr, client, acl]
-    NFV4[nfsv4.ko: proc, xdr, state, session, delegation]
-    NFV4 --> PNFS[pNFS layout drivers]
-    SUN --> LOCK
-    SUN --> NACL
-    SUN --> NFS
-    SUN --> NFV4
-    SUN --> PNFS
-    NETFS --> NFS
-    LOCK --> NFS
-    LOCK --> GRACE
-    NFS --> NFV3
-    NFS --> NFV4
+    APP[Application: read()] --> VFS[VFS: page cache]
+    VFS -->|Cache miss| NFS[nfs_file_read]
+    NFS --> N4[nfs4_proc_read]
+    N4 --> COMP[Build COMPOUND: GETFH + READ]
+    COMP --> XDR[XDR encode arguments]
+    XDR --> RPC[rpc_run_task]
+    RPC --> SCHED[scheduler]
+    SCHED -->|Pick transport| SW[xprt_switch iterator]
+    SW -->|Round-robin| X[xprt_sendmsg]
+    X --> TCP[tcp_sendmsg → NIC]
+    TCP -->|Wait| RECV[tcp_recvmsg]
+    RECV --> DECODE[XDR decode reply]
+    DECODE --> DONE[rpc_task complete]
+    DONE --> VFS2[Page cache updated]
+    VFS2 --> APP2[Application gets data]
 ```
 
-## 6.7 Building and Testing
-
-See `AGENTS.md` for the build recipe. Key commands:
-
-```bash
-# Prepare source tree
-cd ~/kernel-build/linux-source-7.0.0
-echo '-14-generic' > localversion-ubuntu
-cp /boot/config-$(uname -r) .config
-cp /usr/src/linux-headers-$(uname -r)/Module.symvers .
-make olddefconfig && make -j$(nproc) scripts prepare
-
-# Build NFS modules only
-make M=fs/nfs
-
-# Install to running kernel
-sudo cp net/sunrpc/sunrpc.ko fs/nfs/nfs.ko fs/nfs/nfsv3.ko \
-        fs/lockd/lockd.ko fs/nfs_common/grace.ko fs/nfs_common/nfs_acl.ko \
-        /lib/modules/$(uname -r)/updates/
-sudo depmod -a && sudo modprobe nfs
-```
+**Next**: Chapter 7 dives into the SunRPC layer internals — `rpc_clnt`, `rpc_task`, `xprt_switch` — with enough detail to implement custom transport policies.

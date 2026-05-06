@@ -1,233 +1,459 @@
-# Chapter 7: The Linux RPC Layer (sunrpc.ko)
+# Chapter 7: How an RPC Actually Gets Sent — Inside sunrpc.ko
 
-## 7.1 Architecture Overview
+The SunRPC layer is the unsung hero of the NFS stack. The NFS protocol gets the attention — COMPOUND operations, delegations, stateids — but the RPC layer is the engine that makes everything move. Every byte that travels between client and server passes through this code.
 
-The `sunrpc.ko` module provides the transport and scheduling infrastructure for all RPC-based filesystems (NFS, NFSd, lockd). Its layering mirrors the protocol itself:
+This chapter is a deep dive into how the Linux kernel's SunRPC implementation works: how tasks are created, scheduled, dispatched, and completed. If you're going to modify the dispatch path (as we are for multipath), you need to understand every step.
 
-```mermaid
-flowchart TD
-    subgraph Upper Layer
-        C[rpc_clnt] -->|per-client state| XS[xprt_switch]
-        C -->|per-task| T[rpc_task]
-    end
-    subgraph Transport Layer
-        XS -->|transport 1| X1[rpc_xprt : TCP]
-        XS -->|transport N| XN[rpc_xprt : TCP]
-        X1 -->|socket| SK1[struct socket]
-        XN -->|socket| SKN[struct socket]
-    end
-    subgraph Scheduler
-        T -->|enqueue| Q[workqueue]
-        Q -->|execute| TX[tcp_sendmsg]
-        Q -->|wait| RX[tcp_recvmsg]
-    end
-    subgraph Auth Layer
-        C --> A[auth_ops]
-        A -->|AUTH_SYS| AU[au_flavors]
-        A -->|RPCSEC_GSS| AG[auth_gss]
-    end
+## The rpc_clnt: Your Connection to the Server
+
+The `rpc_clnt` is the handle through which all NFS operations flow. It's created once per mount (or, more precisely, once per unique server+authentication combination) and persists until unmount.
+
+```c
+struct rpc_clnt {
+    const char *cl_nodename;       // Client hostname for debugging
+    const char *cl_programname;    // "nfs" or "nfsd"
+    struct rpc_xprt  *cl_xprt;     // The "main" transport
+    struct rpc_xprt_switch *cl_xprtswitch;  // Transport switch
+    struct rpc_auth   *cl_auth;    // Authentication context
+    struct cred       *cl_cred;    // Process credentials
+    int cl_vers;                   // Protocol version (2, 3, 4, ...)
+    unsigned int cl_softrtry : 1;  // Soft (error on timeout) vs hard
+    unsigned int cl_nconnect;      // Number of connections to create
+    atomic_t cl_count;             // Reference count
+};
 ```
 
-## 7.2 The rpc_clnt Lifecycle
+The most important field for our purposes is `cl_xprtswitch`. This points to the transport switch, which manages the list of transports (TCP connections) and the iterator that selects among them.
 
-```mermaid
-stateDiagram-v2
-    [*] --> CREATED: rpc_create()
-    CREATED --> CONNECTING: xprt_create()
-    CONNECTING --> TRANSPORT_READY: connect completes
-    TRANSPORT_READY --> ACTIVE: rpc_run_task
-    ACTIVE --> DRAINING: umount / force kill
-    DRAINING --> SHUTDOWN: all tasks complete
-    SHUTDOWN --> [*]: rpc_destroy()
-```
-
-### rpc_create
+When the NFS client creates an `rpc_clnt`, it calls:
 
 ```c
 struct rpc_clnt *rpc_create(struct rpc_create_args *args)
 {
-    struct rpc_clnt *clnt;
-
-    // Allocate client
+    // 1. Allocate the client structure
     clnt = kzalloc(sizeof(*clnt), GFP_KERNEL);
+    if (!clnt)
+        return ERR_PTR(-ENOMEM);
 
-    // Create initial transport
-    clnt->cl_xprt = rpc_xprt_create(args);
+    // 2. Create the primary transport
+    // This opens a TCP connection to the server
+    xprt = xprt_create_transport(args);
+    if (IS_ERR(xprt)) {
+        kfree(clnt);
+        return ERR_CAST(xprt);
+    }
+    clnt->cl_xprt = xprt;
 
-    // Create transport switch
-    clnt->cl_xprtswitch = rpc_xprt_switch_create(clnt->cl_xprt);
+    // 3. Create the transport switch
+    // The switch wraps the transport with iteration capability
+    xps = xprt_switch_alloc(xprt, GFP_KERNEL);
+    clnt->cl_xprtswitch = xps;
 
-    // Set auth flavour
-    clnt->cl_auth = auth_create(args->authflavor);
+    // 4. Set up authentication
+    // This creates the credential context
+    clnt->cl_auth = auth_create(args->authflavor, args->cred);
+
+    // 5. Note: This is where our multipath hook goes!
+    // After rpc_create returns, we add more transports to the switch
+    // and install a custom iterator.
 
     return clnt;
 }
 ```
 
-## 7.3 The rpc_task State Machine
+## The rpc_task: An RPC in Flight
 
-Every RPC call flows through a state machine in `sched.c`:
+Every individual NFS operation — every READ, WRITE, GETATTR — creates an `rpc_task`. The task tracks the operation from creation through completion.
+
+```c
+struct rpc_task {
+    struct rpc_clnt         *tk_client;     // The client handle
+    const struct rpc_call_ops *tk_ops;      // Callbacks (encode, decode, done)
+    struct rpc_rqst         *tk_rqstp;      // The actual request buffer
+    int                     tk_status;      // Result status
+    unsigned char           tk_flags;       // RPC_TASK_* flags
+    unsigned long           tk_timeout;     // Timeout interval
+    unsigned long           tk_start;       // When the RPC started
+    struct list_head        tk_list;        // For scheduler queues
+
+    // Action function — called to execute the next step
+    void (*tk_action)(struct rpc_task *);
+};
+```
+
+### Task Lifecycle
+
+A task goes through well-defined states:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> RPC_TASK_QUEUED: rpc_run_task()
-    RPC_TASK_QUEUED --> RPC_TASK_ACTIVE: worker picks up
-    RPC_TASK_ACTIVE --> RPC_TASK_SLEEPING: wait for buffer
-    RPC_TASK_SLEEPING --> RPC_TASK_ACTIVE: buffer available
-    RPC_TASK_ACTIVE --> RPC_TASK_SENT: xprt_sendmsg()
-    RPC_TASK_SENT --> RPC_TASK_MSG_RECV: reply received
-    RPC_TASK_SENT --> RPC_TASK_SLEEPING: timeout, prepare retransmit
-    RPC_TASK_MSG_RECV --> RPC_TASK_ACTIVE: decode reply
-    RPC_TASK_ACTIVE --> RPC_TASK_COMPLETE: callback called
-    RPC_TASK_COMPLETE --> [*]: task freed
+    [*] --> INITIALIZED: rpc_new_task
+    INITIALIZED --> QUEUED: rpc_execute
+    QUEUED --> IN_TRANSPORT: Worker picks up task
+    IN_TRANSPORT --> ON_XMIT: xprt_sendmsg
+    ON_XMIT --> RCV_REPLY: tcp_recvmsg detects reply
+    ON_XMIT --> RCV_REPLY: RPC reply matches XID
+    ON_XMIT --> QUEUED: Timeout, retransmit
+    RCV_REPLY --> DECODED: Call decode callback
+    DECODED --> CALLBACK: Call done callback
+    CALLBACK --> [*]: rpc_put_task
 ```
 
-### Task Construction
+Each state transition is driven by the `tk_action` function. The scheduler repeatedly calls `tk_action` until the task completes or fails. This is a manual state machine — each invocation of `tk_action` advances the state by one step.
+
+Here's a simplified version of how `tk_action` works for a typical NFS READ:
 
 ```c
-struct rpc_task *rpc_run_task(const struct rpc_task_setup *setup)
+void nfs_read_rpc_action(struct rpc_task *task)
 {
-    struct rpc_task *task;
+    struct rpc_rqst *req = task->tk_rqstp;
+    struct nfs_pgio_header *hdr = req->rq_buffer;
 
-    task = rpc_new_task(setup->rpc_clnt, setup->flags, GFP_NOWAIT);
-    if (!task)
-        return ERR_PTR(-ENOMEM);
+    switch (task->tk_status) {
+    case 0:
+        // First call: encode the request
+        // This calls the NFS XDR encoder to serialize the READ arguments
+        rpc_call_start(task);
+        req->rq_callinfo = nfs4_enc_read;  // Set up XDR encoder
+        // The scheduler will now send this over the transport
+        break;
 
-    task->tk_action = setup->callback;
-    task->tk_ops = setup->ops;
-
-    rpc_execute(task);
-    return task;
+    case -ETIMEDOUT:
+        // The request timed out. Should we retry?
+        if (task->tk_flags & RPC_TASK_SOFT) {
+            // Soft mount: return error to application
+            rpc_exit(task, -ETIMEDOUT);
+        } else {
+            // Hard mount: retry
+            // The scheduler will try a different transport if available
+            task->tk_status = 0;
+        }
+        break;
+    }
 }
 ```
 
-## 7.4 Transport Switch Details
+## The Scheduler: Managing Concurrency
 
-The `xprt_switch` is stored in `cl_xprtswitch` on the `rpc_clnt`:
+The task scheduler (`sched.c`) manages the queue of tasks waiting to execute. Its job is to match tasks with available transport capacity.
+
+Each transport has a **slot limit** — the maximum number of RPCs that can be in flight simultaneously on that transport. For NFSv3, this defaults to 4. For NFSv4.1 with sessions, it's negotiated with the server and can be 8-64.
+
+When a task is ready to execute:
+
+1. The scheduler checks each transport's available slots
+2. If no transport has a free slot, the task goes to sleep
+3. When a slot frees up (a reply arrives), the scheduler wakes waiting tasks
+4. The awakened task calls `tk_action` to send its request
+
+```c
+// Simplified scheduling logic
+void rpc_schedule_task(struct rpc_task *task)
+{
+    struct rpc_xprt_switch *xps = task->tk_client->cl_xprtswitch;
+    struct rpc_xprt *xprt;
+
+    // Find a transport with an available slot
+    xprt = xps->xps_iter_ops->xps_iter_next(xps);
+    while (xprt) {
+        if (xprt->xprt_slot_avail > 0)
+            break;
+        xprt = xps->xps_iter_ops->xps_iter_next(xps);
+    }
+
+    if (xprt) {
+        // Send the request on this transport
+        xprt_sendmsg(xprt, task);
+    } else {
+        // All transports busy — queue for later
+        rpc_sleep_on(task);
+    }
+}
+```
+
+With the stock single-path iterator, this is trivial: there's one transport, and it's either available or not. With our multipath iterator, the scheduler sees multiple transports and can select among them based on availability, health, and policy.
+
+## The xprt_switch: Holding Multiple Transports
+
+The transport switch is the structure that makes multipath possible. It holds an ordered list of transports and the iterator that selects among them.
 
 ```c
 struct rpc_xprt_switch {
-    struct kref           xps_kref;
-    spinlock_t            xps_lock;
+    struct list_head    xps_xprt_list;       // Linked list of rpc_xprt
+    unsigned int        xps_nxprts;          // Total number of transports
+    unsigned int        xps_nactive;         // Transports in CONNECTED state
+    struct kref         xps_kref;            // Reference count
 
-    struct list_head      xps_xprt_list;   // linked list of rpc_xprt
-
-    // Transport counts
-    unsigned int          xps_nxprts;
-    unsigned int          xps_nactive;
-    unsigned int          xps_nunique_destaddr;
-
-    // Policy
+    // The iterator: this is what we replace for multipath
     const struct rpc_xprt_iter_ops *xps_iter_ops;
-
-    // Callback for multipath setup
-    int (*xps_multipath)(struct rpc_xprt_switch *xps,
-                         struct rpc_xprt *xprt);
 };
 ```
 
-### Iteration Ops
+### Adding a Transport
+
+When we create an additional transport (for a multipath mount), we call:
 
 ```c
-static struct rpc_xprt *
-xprt_iter_default_next(struct rpc_xprt_switch *xps)
+int xprt_switch_add_xprt(struct rpc_xprt_switch *xps, struct rpc_xprt *xprt)
 {
-    // Single transport: always return the one and only xprt
-    return list_first_entry_or_null(&xps->xps_xprt_list,
-                                    struct rpc_xprt, xprt_switch);
-}
+    spin_lock(&xps->xps_lock);
 
-static const struct rpc_xprt_iter_ops xprt_iter_default = {
-    .xps_iter_init = xprt_iter_default_next,
-    .xps_iter_next = xprt_iter_default_next,
+    // Add the transport to the switch's list
+    list_add_tail(&xprt->xprt_switch, &xps->xps_xprt_list);
+    xps->xps_nxprts++;
+
+    // Update the active count if the transport is already connected
+    if (xprt_connected(xprt))
+        xps->xps_nactive++;
+
+    spin_unlock(&xps->xps_lock);
+    return 0;
+}
+```
+
+Once a transport is in the switch, the iterator can see it. Future RPC dispatches will consider it alongside existing transports.
+
+### Removing a Transport
+
+When a transport fails permanently (not just a transient timeout), it should be removed from the switch:
+
+```c
+int xprt_switch_remove_xprt(struct rpc_xprt_switch *xps, struct rpc_xprt *xprt)
+{
+    spin_lock(&xps->xps_lock);
+
+    list_del(&xprt->xprt_switch);
+    xps->xps_nxprts--;
+    if (xprt_connected(xprt))
+        xps->xps_nactive--;
+
+    spin_unlock(&xps->xps_lock);
+
+    // Destroy the transport (close the TCP connection)
+    xprt_destroy(xprt);
+    return 0;
+}
+```
+
+### The Iterator Interface
+
+The iterator is a simple structure with two function pointers:
+
+```c
+struct rpc_xprt_iter_ops {
+    // Initialize iteration (called once per dispatch)
+    struct rpc_xprt *(*xps_iter_init)(struct rpc_xprt_switch *);
+
+    // Get the next transport to use (called for each retry)
+    struct rpc_xprt *(*xps_iter_next)(struct rpc_xprt_switch *);
 };
 ```
 
-A multipath implementation replaces `xps_iter_ops` with a custom iterator:
+Stock kernel implementations:
 
 ```c
-static struct rpc_xprt *
-enfs_xprt_iter_roundrobin_next(struct rpc_xprt_switch *xps)
+// Single transport: always return the only one
+static struct rpc_xprt *xprt_iter_default_init(
+    struct rpc_xprt_switch *xps)
 {
-    struct rpc_xprt *xprt;
-    unsigned int idx = atomic_inc_return(&dispatch_index);
+    return list_first_entry(&xps->xps_xprt_list,
+        struct rpc_xprt, xprt_switch);
+}
 
-    // Round-robin through live transports
-    list_for_each_entry(xprt, &xps->xps_xprt_list, xprt_switch) {
-        if (xprt_connected(xprt) && idx-- == 0)
-            return xprt;
-    }
-
-    return list_first_entry_or_null(&xps->xps_xprt_list,
-                                    struct rpc_xprt, xprt_switch);
+// NFSv4.1 trunking: iterate through trunked connections
+static struct rpc_xprt *xprt_iter_roundrobin_init(
+    struct rpc_xprt_switch *xps)
+{
+    // Start at the first transport, rotate for each dispatch
+    return list_first_entry(&xps->xps_xprt_list,
+        struct rpc_xprt, xprt_switch);
 }
 ```
 
-## 7.5 Authentication
+For our multipath implementation, we install a custom iterator that implements the desired dispatch policy (round-robin, weighted, etc.).
 
-The auth layer adds RPC-level credentials and verifiers:
+## The Auth Layer: Who Are You Really?
+
+Every RPC carries authentication information. The SunRPC auth layer manages this.
+
+For AUTH_SYS (the most common case), the client sends UID, GID, and supplementary groups with each request. The server's NFS daemon translates these into file permission checks.
 
 ```c
 struct rpc_auth {
-    struct module        *au_owner;
-    rpc_authflavor_t      au_flavor;
-    unsigned long         au_flags;
-    rpc_auth_stat_t     (*au_validate)(struct rpc_task *);
-    int                 (*au_wrap)(struct rpc_task *, struct xdr_stream *);
-    int                 (*au_unwrap)(struct rpc_task *, struct xdr_stream *);
+    rpc_authflavor_t    au_flavor;     // AUTH_SYS, AUTH_NONE, RPCSEC_GSS
+    unsigned int        au_count;      // Reference count
+
+    // Create a credential object
+    struct rpc_cred *(*au_create_cred)(struct rpc_auth *, const struct cred *);
+
+    // Destroy a credential
+    void (*au_destroy_cred)(struct rpc_cred *);
 };
 ```
 
-| Flavour | Module | Wraps RPC body |
-|---------|--------|----------------|
-| AUTH_NONE | `auth_null.c` | No |
-| AUTH_SYS | `auth_unix.c` | No (credentials in header) |
-| RPCSEC_GSS | `auth_gss/auth_gss.c` | Yes (encrypts body) |
+The auth layer is important for multipath because **all transports in a switch share the same auth context**. When we add a transport to the switch, we must ensure it authenticates with the same credentials as the existing transports. Otherwise, the server might see different identities on different connections and reject operations.
 
-## 7.6 Socket Transport (xprtsock.c)
+For AUTH_SYS, this is automatic. For RPCSEC_GSS, each new transport would need to establish its own GSS context — which means separate Kerberos ticket exchanges. This is a real engineering challenge for multipath with Kerberos.
 
-The TCP socket transport implements the connection lifecycle:
+## The Socket Transport: Where It All Hits the Wire
 
-```mermaid
-flowchart TD
-    X[rpc_xprt] -->|connect| S[tcp_connect]
-    S -->|wait| C[TCP established]
-    C -->|xprt_connected| XA[XPRT_CONNECTED]
-    XA -->|send| WAIT[wait for reply]
-    WAIT -->|timeout| RET[retransmit]
-    WAIT -->|reply| COMPLETE[task complete]
-    RET -->|max retries| XD[XPRT_DEAD]
-    XD -->|reconnect timer| RCON[reconnect]
-```
-
-Key parameters per transport:
-
-| Parameter | Default | Controls |
-|-----------|---------|----------|
-| `timeo` | 600 (60s) | Initial timeout for RPC |
-| `retrans` | 2 | Max retransmissions before failover |
-| `connect_timeout` | 60s | TCP connect timeout |
-| `max_slot_table_entries` | 4 (v3) / 64 (v4.1) | Concurrent RPCs per connection |
-
-## 7.7 Building Custom Transport Policies
-
-The transport switch iterator (`xps_iter_ops`) is the extension point for custom dispatch. NFSv4.1 trunking uses it. enfs/dnfs will use it. A custom policy requires:
-
-1. Implement `xps_iter_init` and `xps_iter_next`
-2. Install the ops on the switch after building the transport list
-3. Optionally override `xps_multipath` for transport-multipath coordination
+The TCP socket transport (`xprtsock.c`) implements the actual network I/O. It creates a kernel socket, connects to the server, and manages the send/receive buffers.
 
 ```c
-struct rpc_xprt_iter_ops dnfs_iter_ops = {
-    .xps_iter_init = dnfs_iter_init,
-    .xps_iter_next = dnfs_iter_next,
+struct sock_xprt {
+    struct rpc_xprt           xprt;         // Base transport structure
+    struct socket            *sock;         // The kernel socket
+    struct sockaddr_storage   saddr;        // Server address
+    struct sockaddr_storage   srcaddr;      // Local address (for binding)
+    unsigned long             connect_timeout;
+    unsigned long             max_reconnect_timeout;
+    struct work_struct        connect_worker;  // Async connect
+    struct rpc_buffer        *recv;          // Receive buffer
 };
+```
 
-// Install on an existing switch
-void dnfs_install_policy(struct rpc_xprt_switch *xps)
+### Connection Establishment
+
+The transport establishes a TCP connection (potentially asynchronously):
+
+```c
+static void xs_tcp_connect_worker(struct work_struct *work)
 {
-    xps->xps_iter_ops = &dnfs_iter_ops;
+    struct sock_xprt *transport =
+        container_of(work, struct sock_xprt, connect_worker);
+    struct socket *sock;
+    int err;
+
+    // Create a new socket
+    err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
+    if (err)
+        goto out;
+
+    // Bind to a local address if specified
+    if (transport->srcaddr.ss_family != AF_UNSPEC)
+        err = kernel_bind(sock, (struct sockaddr *)&transport->srcaddr,
+                          sizeof(transport->srcaddr));
+
+    // Connect to the server
+    err = kernel_connect(sock, (struct sockaddr *)&transport->saddr,
+                         sizeof(transport->saddr), 0);
+    if (err)
+        goto out_close;
+
+    // Connection established
+    transport->sock = sock;
+    xprt_connected(&transport->xprt);
+    return;
+
+out_close:
+    sock_release(sock);
+out:
+    // Schedule a reconnect attempt
+    schedule_delayed_work(&transport->xs_reconnect_delay, delay);
 }
 ```
 
-Chapter 8 describes how dnfs hooks into this infrastructure.
+This async connect is important for multipath. If we create a transport to a server that's temporarily unreachable, the connect attempt runs in the background. The transport becomes available as soon as the connection succeeds. Meanwhile, operations can proceed on the existing transports.
+
+### Sending and Receiving
+
+When the scheduler selects a transport to send an RPC:
+
+```c
+int xs_tcp_sendmsg(struct rpc_xprt *xprt, struct rpc_rqst *req)
+{
+    struct socket *sock = container_of(xprt, struct sock_xprt, xprt)->sock;
+    struct kvec iov = {
+        .iov_base = req->rq_snd_buf,
+        .iov_len = req->rq_slen,
+    };
+    struct msghdr msg = {
+        .msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL,
+    };
+    int err;
+
+    err = kernel_sendmsg(sock, &msg, &iov, 1, iov.iov_len);
+    if (err > 0) {
+        // Sent successfully
+        xprt->xprt_used_bytes += err;
+        return 0;
+    }
+
+    // Connection error — mark transport as dead
+    xprt_disconnect(xprt);
+    return err;
+}
+```
+
+On the receive side:
+
+```c
+void xs_tcp_data_ready(struct sock *sk)
+{
+    struct rpc_xprt *xprt = sk->sk_user_data;
+    struct sk_buff *skb;
+
+    // Read all available data from the socket
+    while ((skb = skb_dequeue(&sk->sk_receive_queue))) {
+        // Copy data into the receive buffer
+        skb_copy_datagram_msg(skb, 0, xprt->recv, skb->len);
+
+        // Check if we have a complete RPC reply
+        if (rpc_complete_msg(xprt, xprt->recv)) {
+            // Find the matching rpc_task by XID
+            struct rpc_rqst *req = rpc_find_req(xprt, xprt->recv);
+            if (req) {
+                // Wake up the waiting task
+                rpc_wake_up_task(req->rq_task);
+            }
+        }
+    }
+}
+```
+
+The receive path is where the XID matching happens. Each `rpc_rqst` has a unique XID. When a reply arrives, the receive handler extracts the XID from the reply and wakes the corresponding task. With multiple transports, each transport has its own receive handler — replies come in on the same connection that carried the request.
+
+## Putting It All Together: A Multipath Dispatch
+
+Here's what a complete multipath NFS READ looks like:
+
+1. **Application** calls `read()` → VFS → NFS → `nfs4_proc_read()`
+2. **NFS layer** builds a COMPOUND RPC and encodes it as XDR
+3. **RPC task** is created via `rpc_run_task()`
+4. **Scheduler** calls `xps_iter_ops->xps_iter_next()` to pick a transport
+5. **Our iterator** returns transport #2 (say, because #1 was used last time)
+6. **Transport #2** sends the TCP data and waits for a reply
+7. **Reply** arrives on transport #2's socket
+8. **Receive handler** matches reply to the task by XID
+9. **Task** completes, decoded data goes to the application
+
+If transport #2's reply times out:
+
+6a. **Timer fires** on the task
+7a. **Scheduler** marks the operation for retransmit
+8a. **Scheduler** calls `xps_iter_ops->xps_iter_next()` again — our iterator skips the failed transport
+9a. **Transport #1** sends the retransmitted request
+10a. **Reply** arrives on transport #1
+11a. **Task** completes — the application never knew there was a problem
+
+This is the core of the multipath value proposition. The application sees exactly the same interface as a single-path NFS mount — the same `read()` system call, the same errno values — but with better throughput and automatic failover.
+
+## Chapter Summary
+
+The SunRPC layer provides:
+
+- **rpc_clnt**: The client handle, owns the transport switch and auth context
+- **rpc_task**: An individual RPC, tracks state through its lifecycle
+- **xprt_switch**: Manages multiple transports, selects via iterator
+- **rpc_xprt**: A TCP connection to the server, handles send/receive
+- **rpc_auth**: Authentication context, shared across all transports
+
+Our multipath implementation modifies only three things:
+
+1. **Add transports** to the switch after `rpc_clnt` creation
+2. **Replace the iterator** with a multipath-aware version
+3. **Monitor transport health** to skip dead transports during dispatch
+
+Everything else — the task lifecycle, the XDR encoding, the authentication — stays unchanged. The existing kernel infrastructure handles multipath naturally once the transport switch has multiple transports and the right iterator.
+
+**Next**: Chapter 8 describes the complete dnfs design — patch structure, mount option handling, and the integration points with the existing NFS client.
