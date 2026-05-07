@@ -1,6 +1,6 @@
 # Makefile for dnfs unit tests
 #
-# Compiles the kernel option parsing code (dnfs_parse.c) in user space
+# Compiles the kernel option parsing code (nfs_multipath.c) in user space
 # using mock kernel headers, then runs the unit tests.
 #
 # Usage:
@@ -22,10 +22,10 @@ INCLUDES := -I. \
 	    -I../fs/nfs
 
 # Test source files.
-SRCS := unit/test_dnfs_parse.c
+SRCS := unit/test_nfs_multipath.c
 
 # All test binaries.
-BINS := test_dnfs_parse
+BINS := test_nfs_multipath
 
 .PHONY: all build run clean
 
@@ -49,7 +49,7 @@ run: build
 		./$$test; \
 	done
 
-test_dnfs_parse: unit/test_dnfs_parse.c
+test_nfs_multipath: unit/test_nfs_multipath.c
 	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^
 
 clean:

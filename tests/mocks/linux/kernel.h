@@ -2,7 +2,7 @@
  * Mock kernel headers for user-space compilation of NFS option parsing code.
  *
  * These headers provide just enough of the kernel API surface to compile
- * dnfs_parse.c and the fs_context.c option parsing code in user space.
+ * nfs_multipath.c and the fs_context.c option parsing code in user space.
  *
  * Each mock either:
  *   (a) Wraps the equivalent user-space libc function (e.g., kmalloc → malloc)
@@ -103,3 +103,7 @@ static inline bool  IS_ERR_OR_NULL(const void *p) { return !p || IS_ERR(p); }
 	typeof(a) _a = (a); typeof(b) _b = (b); _a > _b ? _a : _b; })
 
 #endif /* _MOCK_LINUX_KERNEL_H */
+
+/* Mock for EXPORT_SYMBOL — no-op in user-space builds */
+#define EXPORT_SYMBOL(x)
+#define EXPORT_SYMBOL_GPL(x)
