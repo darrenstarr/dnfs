@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fix Makefile: add dnfs_parse.o to the nfs-y source list."""
+"""Fix Makefile: add nfs_multipath.o to the nfs-y source list."""
 import sys
 
 with open('Makefile') as f:
@@ -9,6 +9,6 @@ with open('Makefile', 'w') as f:
     for l in lines:
         f.write(l)
         if l.strip().startswith('nfs-y') and 'client.o' in l:
-            f.write('\t\t\t   dnfs_parse.o \\\n')
+            f.write('\t\t\t   nfs_multipath.o \\\n')
 
 print("Makefile patched")

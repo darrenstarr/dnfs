@@ -2,7 +2,7 @@ From: Darren Starr <darren@example.com>
 Date: Tue, 5 May 2026 23:00:00 +0000
 Subject: [PATCH 5/6] fs/nfs/super.c: dnfs mount/unmount hooks
 
-Add the mount and unmount hooks for dnfs multipath support.
+Add the mount and unmount hooks for NFS multipath support.
 
 During mount (nfs_get_tree_common), the parsed address list is
 transferred from the mount context to the nfs_server structure.
@@ -32,7 +32,7 @@ index 532766a..d065d4e 100644
 +	 * The persistent list (server->dnfs_remoteaddrs) was transferred
 +	 * from the transient mount context during get_tree.
 +	 */
-+	if (IS_ENABLED(CONFIG_DNFS)) {
++	if (IS_ENABLED(CONFIG_NFS_MULTIPATH)) {
 +		kfree(server->dnfs_remoteaddrs);
 +		server->dnfs_remoteaddrs = NULL;
 +	}
@@ -51,8 +51,8 @@ index 532766a..d065d4e 100644
 +	 * The address list was parsed from the remoteaddrs= mount
 +	 * option during fs_context parsing (see fs_context.c).
 +	 */
-+	if (IS_ENABLED(CONFIG_DNFS)) {
-+		struct dnfs_address_list *addrs;
++	if (IS_ENABLED(CONFIG_NFS_MULTIPATH)) {
++		struct nfs_multipath_addrs *addrs;
 +
 +		addrs = ctx->nfs_server.dnfs_remoteaddrs;
 +		if (addrs) {

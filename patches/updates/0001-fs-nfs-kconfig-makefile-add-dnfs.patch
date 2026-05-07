@@ -1,6 +1,6 @@
 From: Darren Starr <darren@example.com>
 Date: Tue, 5 May 2026 23:00:00 +0000
-Subject: [PATCH 1/6] fs/nfs: add CONFIG_DNFS for client multipath support
+Subject: [PATCH 1/6] fs/nfs: add CONFIG_NFS_MULTIPATH for client multipath support
 
 Add the DNFS configuration option to the NFS client Kconfig and
 Makefile. When enabled, this option allows a single NFSv4.1 mount
@@ -57,7 +57,7 @@ index 18e4b77..c7c1e3a 100644
  CFLAGS_nfstrace.o += -I$(src)
  nfs-y 			:= client.o dir.o file.o getroot.o inode.o super.o \
  			   io.o direct.o pagelist.o read.o symlink.o unlink.o \
-+			   dnfs_parse.o \
++			   nfs_multipath.o \
  			   write.o namespace.o mount_clnt.o nfstrace.o \
  			   export.o sysfs.o fs_context.o
  nfs-$(CONFIG_ROOT_NFS)	+= nfsroot.o

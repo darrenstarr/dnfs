@@ -9,7 +9,7 @@ with open('nfs4proc.c') as f:
 # takes a struct xprt_create, not individual sockaddr parameters.
 # Let's check the header to verify, but for now use the correct call.
 
-old_hook = '/* dnfs: create extra transports if remoteaddrs= was specified */'
+old_hook = '/* nfs_multipath: create extra transports if remoteaddrs= was specified */'
 if old_hook in content:
     # Remove the old broken hook
     start = content.find(old_hook)
@@ -26,9 +26,9 @@ insert_marker = 'nfs4_update_session(session, &res);\n\t}'
 new_code = '''\tnfs4_update_session(session, &res);
 \t}
 
-\t/* dnfs: create extra transports after session established */
+\t/* nfs_multipath: create extra transports after session established */
 \tif (!status) {
-\t\tstruct dnfs_address_list *list = dnfs_get_address_list();
+\t\tstruct nfs_multipath_addrs *list = nfs_multipath_get_addrs();
 \t\tif (list && list->count > 1) {
 \t\t\tstruct rpc_clnt *clnt = clp->cl_rpcclient;
 \t\t\tstruct xprt_create xprtargs = {
@@ -45,10 +45,10 @@ new_code = '''\tnfs4_update_session(session, &res);
 \t\t\t\txprtargs.addrsize = sizeof(list->addrs[i]);
 \t\t\t\trpc_clnt_add_xprt(clnt, &xprtargs, NULL, NULL);
 \t\t\t}
-\t\t\tpr_info("NFS: dnfs: added %d extra transports\\n",
+\t\t\tpr_info("NFS: nfs_multipath: added %d extra transports\\n",
 \t\t\t\tlist->count - 1);
 \t\t}
-\t\tdnfs_free_address_list(list);
+\t\tnfs_multipath_free_addrs(list);
 \t}
 '''
 

@@ -16,7 +16,7 @@ addresses cause the mount to fail with EINVAL.
 SECURITY
 
 - Input length bounded by a static maximum (4096 bytes)
-- Token count bounded by CONFIG_DNFS_MAX_REMOTE_ADDRS (default 32)
+- Token count bounded by CONFIG_NFS_MULTIPATH_MAX_ADDRS (default 32)
 - Each address validated by rpc_pton() before any allocation
 - All allocations use GFP_KERNEL with proper error checking
 - No string buffer overflows (all copies use strscpy)
@@ -56,7 +56,7 @@ index 2b7ee53..4c5d2a8 100644
  	Opt_migration,
  	Opt_nosharecache,
  	Opt_nfsvers,
-+#if IS_ENABLED(CONFIG_DNFS)
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
 +	Opt_remoteaddrs,
 +	Opt_localaddrs,
 +#endif
@@ -67,7 +67,7 @@ index 2b7ee53..4c5d2a8 100644
  	fsparam_flag  ("nosharecache",	Opt_nosharecache),
  	fsparam_string("vers",		Opt_nfsvers),
  	fsparam_string("nfsvers",	Opt_nfsvers),
-+#if IS_ENABLED(CONFIG_DNFS)
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
 +	fsparam_string("remoteaddrs",	Opt_remoteaddrs),
 +	fsparam_string("localaddrs",	Opt_localaddrs),
 +#endif
@@ -78,7 +78,7 @@ index 2b7ee53..4c5d2a8 100644
  	return 0;
  }
 
-+#if IS_ENABLED(CONFIG_DNFS)
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
 +/**
 + * nfs_parse_remoteaddrs - Parse remoteaddrs= mount option
 + * @ctx:   NFS mount context
@@ -96,7 +96,7 @@ index 2b7ee53..4c5d2a8 100644
 +static int nfs_parse_remoteaddrs(struct nfs_fs_context *ctx,
 +				 const char *value)
 +{
-+	struct dnfs_address_list *list;
++	struct nfs_multipath_addrs *list;
 +	struct sockaddr_storage *addrs;
 +	const char *p, *next;
 +	unsigned int count = 0;
@@ -202,7 +202,7 @@ index 2b7ee53..4c5d2a8 100644
 +	kfree(list);
 +	return ret;
 +}
-+#endif /* CONFIG_DNFS */
++#endif /* CONFIG_NFS_MULTIPATH */
 +
  static bool nfs_check_u32(const struct fs_parameter *param, u32 *value)
  {
@@ -211,7 +211,7 @@ index 2b7ee53..4c5d2a8 100644
  		}
  		break;
 
-+#if IS_ENABLED(CONFIG_DNFS)
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
 +	case Opt_remoteaddrs:
 +		ret = nfs_parse_remoteaddrs(ctx, param->string);
 +		if (ret < 0) {
@@ -233,7 +233,7 @@ index 2b7ee53..4c5d2a8 100644
  	struct nfs_fs_context *ctx = nfs_fc2context(fc);
 
  	if (ctx) {
-+#if IS_ENABLED(CONFIG_DNFS)
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
 +		kfree(ctx->nfs_server.dnfs_remoteaddrs);
 +		ctx->nfs_server.dnfs_remoteaddrs = NULL;
 +#endif
@@ -244,7 +244,7 @@ index 2b7ee53..4c5d2a8 100644
  		}
  	}
 
-+#if IS_ENABLED(CONFIG_DNFS)
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
 +	/*
 +	 * Validate that remoteaddrs= was only used with NFSv4.1.
 +	 * The feature depends on the session model for ordering.

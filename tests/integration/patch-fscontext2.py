@@ -6,7 +6,7 @@ with open('fs_context.c') as f:
     c = f.read()
 
 old = 'case Opt_remoteaddrs:\n\tcase Opt_localaddrs:\n\t\treturn 0;'
-new = 'case Opt_remoteaddrs:\n\t\treturn dnfs_parse_remoteaddrs(NULL, param->string);\n\tcase Opt_localaddrs:\n\t\treturn 0;'
+new = 'case Opt_remoteaddrs:\n\t\treturn nfs_multipath_parse(NULL, param->string);\n\tcase Opt_localaddrs:\n\t\treturn 0;'
 
 if old in c:
     c = c.replace(old, new)

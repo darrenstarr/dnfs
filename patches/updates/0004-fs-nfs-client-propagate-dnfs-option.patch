@@ -29,7 +29,7 @@ index dd94b93..9e2b3e8 100644
 +	 * newly allocated nfs_client. It will be propagated to the
 +	 * nfs_server during nfs_get_server().
 +	 */
-+	if (!IS_ERR(new) && IS_ENABLED(CONFIG_DNFS) && cl_init->dnfs_remoteaddrs)
++	if (!IS_ERR(new) && IS_ENABLED(CONFIG_NFS_MULTIPATH) && cl_init->dnfs_remoteaddrs)
 +		new->cl_dnfs_remoteaddrs = cl_init->dnfs_remoteaddrs;
 +
  	return new;
@@ -43,7 +43,7 @@ index dd94b93..9e2b3e8 100644
 +	 * Propagate the dnfs address list from the init data.
 +	 * This makes the address list available after session creation.
 +	 */
-+	if (IS_ENABLED(CONFIG_DNFS) && cl_init)
++	if (IS_ENABLED(CONFIG_NFS_MULTIPATH) && cl_init)
 +		clp->cl_dnfs_info = cl_init->dnfs_remoteaddrs;
 +
  	if (clp->cl_cons_state == NFS_CS_READY) {
@@ -57,7 +57,7 @@ index dd94b93..9e2b3e8 100644
 +	 * Initialize dnfs fields to NULL.
 +	 * Set during mount if remoteaddrs= was provided.
 +	 */
-+	if (IS_ENABLED(CONFIG_DNFS)) {
++	if (IS_ENABLED(CONFIG_NFS_MULTIPATH)) {
 +		server->dnfs_remoteaddrs = NULL;
 +		server->dnfs_naddrs = 0;
 +	}
@@ -72,7 +72,7 @@ index dd94b93..9e2b3e8 100644
 +	/*
 +	 * Free the dnfs address list if one was allocated.
 +	 */
-+	if (IS_ENABLED(CONFIG_DNFS)) {
++	if (IS_ENABLED(CONFIG_NFS_MULTIPATH)) {
 +		kfree(server->dnfs_remoteaddrs);
 +		server->dnfs_remoteaddrs = NULL;
 +	}

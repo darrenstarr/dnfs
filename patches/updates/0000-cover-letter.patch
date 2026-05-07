@@ -36,7 +36,7 @@ failover across all transports with zero additional code.
 Patches
 =======
 
-  1/6  fs/nfs/Kconfig + Makefile: add CONFIG_DNFS option
+  1/6  fs/nfs/Kconfig + Makefile: add CONFIG_NFS_MULTIPATH option
   2/6  fs/nfs/internal.h: add dnfs fields to mount structures
   3/6  fs/nfs/fs_context.c: parse remoteaddrs= mount option
   4/6  fs/nfs/client.c: propagate dnfs option through nfs_client

@@ -8,11 +8,11 @@ files = {}
 with open('internal.h') as f:
     c = f.read()
 
-# Add struct dnfs_address_list (after NFS_SB_MASK line or similar)
-if 'struct dnfs_address_list' not in c:
+# Add struct nfs_multipath_addrs (after NFS_SB_MASK line or similar)
+if 'struct nfs_multipath_addrs' not in c:
     c = c.replace(
         'extern const struct export_operations nfs_export_ops;',
-        'struct dnfs_address_list {\n\tunsigned int count;\n\tunsigned int max;\n\tstruct sockaddr_storage addrs[];\n};\n\nextern const struct export_operations nfs_export_ops;'
+        'struct nfs_multipath_addrs {\n\tunsigned int count;\n\tunsigned int max;\n\tstruct sockaddr_storage addrs[];\n};\n\nextern const struct export_operations nfs_export_ops;'
     )
     print('internal.h: added dnfs_address_list struct')
 
@@ -20,7 +20,7 @@ if 'struct dnfs_address_list' not in c:
 if 'cl_dnfs_remoteaddrs' not in c:
     c = c.replace(
         'unsigned int		cl_max_connect;',
-        'unsigned int		cl_max_connect;\n\tstruct dnfs_address_list *cl_dnfs_remoteaddrs;'
+        'unsigned int		cl_max_connect;\n\tstruct nfs_multipath_addrs *cl_dnfs_remoteaddrs;'
     )
     print('internal.h: added cl_dnfs_remoteaddrs')
 
@@ -33,23 +33,23 @@ with open('Kconfig') as f:
 if 'config DNFS' not in c:
     c = c.replace(
         'config NFS_V4_1',
-        'config DNFS\n\tbool "dnfs client multipath"\n\tdepends on NFS_V4_1\n\tdefault n\n\tselect SUNRPC\n\thelp\n\t  Client-side multipath for NFSv4.1.\n\t  Adds the remoteaddrs= mount option.\n\nconfig NFS_V4_1'
+        'config DNFS\n\tbool "NFS client multipath"\n\tdepends on NFS_V4_1\n\tdefault n\n\tselect SUNRPC\n\thelp\n\t  Client-side multipath for NFSv4.1.\n\t  Adds the remoteaddrs= mount option.\n\nconfig NFS_V4_1'
     )
     with open('Kconfig', 'w') as f:
         f.write(c)
-    print('Kconfig: added CONFIG_DNFS')
+    print('Kconfig: added CONFIG_NFS_MULTIPATH')
 
 # ====== 3. Makefile ======
 with open('Makefile') as f:
     c = f.read()
-if 'dnfs_parse.o' not in c:
+if 'nfs_multipath.o' not in c:
     c = c.replace(
         'nfs-y \t\t\t:= client.o dir.o file.o getroot.o inode.o super.o \\',
-        'nfs-y \t\t\t:= client.o dir.o file.o getroot.o inode.o super.o \\\n\t\t\t   dnfs_parse.o \\'
+        'nfs-y \t\t\t:= client.o dir.o file.o getroot.o inode.o super.o \\\n\t\t\t   nfs_multipath.o \\'
     )
     with open('Makefile', 'w') as f:
         f.write(c)
-    print('Makefile: added dnfs_parse.o')
+    print('Makefile: added nfs_multipath.o')
 
 # ====== 4. fs_context.c ======
 with open('fs_context.c') as f:

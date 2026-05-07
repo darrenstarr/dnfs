@@ -1,9 +1,9 @@
 From: Darren Starr <darren@example.com>
 Date: Tue, 5 May 2026 23:00:00 +0000
-Subject: [PATCH 3b/6] fs/nfs/dnfs_parse.c: new file for mount option parsing
+Subject: [PATCH 3b/6] fs/nfs/nfs_multipath.c: new file for mount option parsing
 
 Add the mount option parser implementation for the remoteaddrs=
-option. This file is compiled into nfs.ko when CONFIG_DNFS=y.
+option. This file is compiled into nfs.ko when CONFIG_NFS_MULTIPATH=y.
 
 The parser validates all input against length and count limits,
 uses the kernel's rpc_pton() for address resolution, and properly
@@ -11,21 +11,21 @@ handles error cases (malformed addresses, memory allocation failures).
 
 Signed-off-by: Darren Starr <darren@example.com>
 ---
- fs/nfs/dnfs_parse.c | 153 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ fs/nfs/nfs_multipath.c | 153 +++++++++++++++++++++++++++++++++++++++++++++++++++
  1 file changed, 153 insertions(+)
 
-diff --git a/fs/nfs/dnfs_parse.c b/fs/nfs/dnfs_parse.c
+diff --git a/fs/nfs/nfs_multipath.c b/fs/nfs/nfs_multipath.c
 new file mode 100644
 index 0000000..1234567
 --- /dev/null
-+++ b/fs/nfs/dnfs_parse.c
++++ b/fs/nfs/nfs_multipath.c
 @@ -0,0 +1,153 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
-+ * fs/nfs/dnfs_parse.c -- Distributed NFS mount option parsing
++ * fs/nfs/nfs_multipath.c -- Distributed NFS mount option parsing
 + *
 + * Implements the "remoteaddrs=" mount option parser for client-side
-+ * NFSv4.1 multipath. Compiled into nfs.ko when CONFIG_DNFS is enabled.
++ * NFSv4.1 multipath. Compiled into nfs.ko when CONFIG_NFS_MULTIPATH is enabled.
 + *
 + * The remoteaddrs= option accepts a tilde-separated list of server
 + * addresses. Each address is validated using rpc_pton().
@@ -45,14 +45,14 @@ index 0000000..1234567
 +
 +#define DNFS_MAX_OPTION_STRLEN 4096
 +
-+void dnfs_free_address_list(struct dnfs_address_list *list)
++void nfs_multipath_free_addrs(struct nfs_multipath_addrs *list)
 +{
 +	kfree(list);
 +}
 +
-+int dnfs_parse_remoteaddrs(struct nfs_fs_context *ctx, const char *value)
++int nfs_multipath_parse(struct nfs_fs_context *ctx, const char *value)
 +{
-+	struct dnfs_address_list *list;
++	struct nfs_multipath_addrs *list;
 +	const char *p, *next;
 +	unsigned int count = 0, max_count;
 +	size_t val_len;
@@ -75,7 +75,7 @@ index 0000000..1234567
 +		if (!*p)
 +			break;
 +		count++;
-+		if (count >= CONFIG_DNFS_MAX_REMOTE_ADDRS)
++		if (count >= CONFIG_NFS_MULTIPATH_MAX_ADDRS)
 +			break;
 +		p = strchr(p, '~');
 +		if (!p)
@@ -86,7 +86,7 @@ index 0000000..1234567
 +	if (count == 0)
 +		return -EINVAL;
 +
-+	max_count = CONFIG_DNFS_MAX_REMOTE_ADDRS;
++	max_count = CONFIG_NFS_MULTIPATH_MAX_ADDRS;
 +	if (count > max_count)
 +		return -E2BIG;
 +
@@ -119,7 +119,7 @@ index 0000000..1234567
 +		if (!rpc_pton(&init_net, p, token_len,
 +			      (struct sockaddr *)&list->addrs[list->count],
 +			      sizeof(list->addrs[list->count]))) {
-+			pr_warn("NFS: dnfs: invalid address '%.*s'\n",
++			pr_warn("NFS: nfs_multipath: invalid address '%.*s'\n",
 +				(int)token_len, p);
 +			ret = -EINVAL;
 +			goto out_free;

@@ -1,13 +1,13 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# test-multipath-mount.sh — Integration test for dnfs multipath mounts
+# test-multipath-mount.sh — Integration test for NFS multipath mounts
 #
 # Tests NFSv4.1 mounts with the remoteaddrs= option against a local
 # or remote NFS server. Requires root privileges.
 #
 # PREREQUISITES
-#   - Patched kernel with CONFIG_DNFS=y loaded
+#   - Patched kernel with CONFIG_NFS_MULTIPATH=y loaded
 #   - NFSv4.1 server running on TEST_SERVER
 #   - Export /export available
 #
@@ -117,7 +117,7 @@ echo "Test 6: Data integrity through multipath mount"
 if mount -t nfs4 -o vers=4.1,hard,timeo=600,remoteaddrs="${EXTRA_ADDRS}" \
 	"${TEST_SERVER}:${EXPORT}" "${MOUNT_POINT}"; then
 	# Write a known pattern
-	echo "Hello from dnfs multipath test $(date)" > "${MOUNT_POINT}/test-file.txt"
+	echo "Hello from NFS multipath test $(date)" > "${MOUNT_POINT}/test-file.txt"
 	# Read it back
 	CONTENT=$(cat "${MOUNT_POINT}/test-file.txt")
 	if echo "${CONTENT}" | grep -q "Hello from dnfs"; then

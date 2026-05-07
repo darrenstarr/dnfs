@@ -159,14 +159,6 @@ config NFS_V4_SECURITY_LABEL
 	depends on NFS_V4_2 && SECURITY
 	default y
 
-config DNFS
-	bool "NFS client multipath"
-	depends on NFS_V4_1
-	default n
-	help
-	  Client-side multipath via remoteaddrs=.
-	  NFSv4.1 only.
-
 config ROOT_NFS
 	bool "Root file system on NFS"
 	depends on NFS_FS=y && IP_PNP

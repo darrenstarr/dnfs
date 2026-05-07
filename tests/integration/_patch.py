@@ -7,10 +7,10 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 # Kconfig
 with open('Kconfig') as f:
     c = f.read()
-if 'CONFIG_DNFS' not in c:
+if 'CONFIG_NFS_MULTIPATH' not in c:
     c = c.replace(
         'config NFS_V4_1',
-        'config DNFS\n\tbool "dnfs client multipath"\n\tdepends on NFS_V4_1\n\tdefault n\n\thelp\n\t  Client-side multipath for NFSv4.1.\n\t  Adds remoteaddrs= mount option.\n\t  Zero server changes required.\n\t  If unsure, say N.\n\nconfig NFS_V4_1',
+        'config DNFS\n\tbool "NFS client multipath"\n\tdepends on NFS_V4_1\n\tdefault n\n\thelp\n\t  Client-side multipath for NFSv4.1.\n\t  Adds remoteaddrs= mount option.\n\t  Zero server changes required.\n\t  If unsure, say N.\n\nconfig NFS_V4_1',
         1
     )
     with open('Kconfig', 'w') as f:
@@ -25,7 +25,7 @@ added = False
 for l in lines:
     new.append(l)
     if l.strip().endswith('super.o \\') and not added:
-        new.append('\t\t\t   dnfs_parse.o \\\n')
+        new.append('\t\t\t   nfs_multipath.o \\\n')
         added = True
 with open('Makefile', 'w') as f:
     f.writelines(new)
@@ -75,8 +75,8 @@ if 'dnfs_remoteaddrs' not in c:
         f.write(c)
     print('super.c: done')
 
-# dnfs_parse.c
-src = 'dnfs_parse.c'
+# nfs_multipath.c
+src = 'nfs_multipath.c'
 if os.path.exists(src):
     print(f'{src}: exists ({os.path.getsize(src)} bytes)')
 else:

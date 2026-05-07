@@ -76,8 +76,6 @@ enum nfs_param {
 	Opt_rdirplus_none,
 	Opt_rdirplus_force,
 	Opt_rdma,
-	Opt_remoteaddrs,
-	Opt_localaddrs,
 	Opt_resvport,
 	Opt_retrans,
 	Opt_retry,
@@ -200,8 +198,6 @@ static const struct fs_parameter_spec nfs_fs_parameters[] = {
 	fsparam_flag_no("rdirplus", Opt_rdirplus), // rdirplus|nordirplus
 	fsparam_string("rdirplus",  Opt_rdirplus), // rdirplus=...
 	fsparam_flag  ("rdma",		Opt_rdma),
-	fsparam_string("remoteaddrs",	Opt_remoteaddrs),
-	fsparam_string("localaddrs",	Opt_localaddrs),
 	fsparam_flag_no("resvport",	Opt_resvport),
 	fsparam_u32   ("retrans",	Opt_retrans),
 	fsparam_string("retry",		Opt_retry),

@@ -42,7 +42,7 @@ index 1033e3a..b09e5ca 100644
  	return 0;
  }
 
-+#if IS_ENABLED(CONFIG_DNFS)
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
 +/**
 + * nfs4_dnfs_create_xprts - Create extra transports for dnfs
 + * @clp: NFS client with an established NFSv4.1 session
@@ -60,7 +60,7 @@ index 1033e3a..b09e5ca 100644
 + */
 +int nfs4_dnfs_create_xprts(struct nfs_client *clp)
 +{
-+	struct dnfs_address_list *list;
++	struct nfs_multipath_addrs *list;
 +	struct rpc_clnt *clnt;
 +	int i, ret;
 +	int success = 0, failed = 0;
@@ -100,7 +100,7 @@ index 1033e3a..b09e5ca 100644
 +		 */
 +		ret = rpc_clnt_add_xprt(clnt, sa, salen, NULL, NULL);
 +		if (ret < 0) {
-+			pr_warn("NFS: dnfs: failed to create xprt [%d]: %d\n",
++			pr_warn("NFS: nfs_multipath: failed to create xprt [%d]: %d\n",
 +				i, ret);
 +			failed++;
 +			continue;
@@ -110,14 +110,14 @@ index 1033e3a..b09e5ca 100644
 +	}
 +
 +	if (failed > 0)
-+		pr_info("NFS: dnfs: created %d/%d extra transports\n",
++		pr_info("NFS: nfs_multipath: created %d/%d extra transports\n",
 +			success, success + failed);
 +	else if (success > 0)
-+		pr_debug("NFS: dnfs: created %d extra transports\n", success);
++		pr_debug("NFS: nfs_multipath: created %d extra transports\n", success);
 +
 +	return 0;
 +}
-+#endif /* CONFIG_DNFS */
++#endif /* CONFIG_NFS_MULTIPATH */
 +
  /**
   * nfs4_init_client_minor_version - Ensure client is created with
@@ -127,14 +127,14 @@ index 1033e3a..b09e5ca 100644
  		goto out;
 
 +	/*
-+	 * Session is established. If dnfs multipath is configured,
++	 * Session is established. If NFS multipath is configured,
 +	 * create additional transports to the addresses specified
 +	 * in the remoteaddrs= mount option.
 +	 *
 +	 * This is intentionally placed after session creation so that
 +	 * the new transports can carry operations using the session ID.
 +	 */
-+	if (IS_ENABLED(CONFIG_DNFS)) {
++	if (IS_ENABLED(CONFIG_NFS_MULTIPATH)) {
 +		status = nfs4_dnfs_create_xprts(clp);
 +		/* Non-fatal: mount proceeds with whatever transports exist. */
 +	}

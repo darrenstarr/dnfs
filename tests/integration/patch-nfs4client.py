@@ -11,16 +11,16 @@ new = """\tout:
 }
 
 /*
- * Create additional RPC transports for dnfs multipath.
+ * Create additional RPC transports for NFS multipath.
  * Called after session creation if remoteaddrs= was specified.
  */
 static void dnfs_create_extra_transports(struct nfs_client *clp)
 {
-	struct dnfs_address_list *list;
+	struct nfs_multipath_addrs *list;
 	struct rpc_clnt *clnt;
 	int i;
 
-	list = dnfs_get_address_list();
+	list = nfs_multipath_get_addrs();
 	if (!list || list->count <= 1)
 		goto out;
 
@@ -28,7 +28,7 @@ static void dnfs_create_extra_transports(struct nfs_client *clp)
 	if (!clnt)
 		goto out;
 
-	pr_info("NFS: dnfs: creating %d extra transports\\n", list->count - 1);
+	pr_info("NFS: nfs_multipath: creating %d extra transports\\n", list->count - 1);
 
 	for (i = 1; i < list->count; i++) {
 		struct sockaddr *sa = (struct sockaddr *)&list->addrs[i];
@@ -37,14 +37,14 @@ static void dnfs_create_extra_transports(struct nfs_client *clp)
 
 		ret = rpc_clnt_add_xprt(clnt, sa, salen, NULL, NULL);
 		if (ret < 0)
-			pr_warn("NFS: dnfs: failed to add xprt %d: %d\\n", i, ret);
+			pr_warn("NFS: nfs_multipath: failed to add xprt %d: %d\\n", i, ret);
 		else
-			pr_info("NFS: dnfs: added transport %d/%d\\n",
+			pr_info("NFS: nfs_multipath: added transport %d/%d\\n",
 				i, list->count - 1);
 	}
 
 out:
-	dnfs_free_address_list(list);
+	nfs_multipath_free_addrs(list);
 }"""
 
 if old in c:

@@ -17,7 +17,7 @@ Three structures are affected:
 3. nfs_server: stores a reference to the address list for the
    lifetime of the mount (used for procfs display and reconnect).
 
-All fields are gated by #if IS_ENABLED(CONFIG_DNFS) and placed
+All fields are gated by #if IS_ENABLED(CONFIG_NFS_MULTIPATH) and placed
 at the end of their respective structures to avoid affecting
 structure layout for non-dnfs builds.
 
@@ -36,16 +36,16 @@ index 46aded5..8f5e3c1 100644
 
 +/*
 + * Maximum number of dnfs remote addresses per mount.
-+ * Controlled by CONFIG_DNFS_MAX_REMOTE_ADDRS (default 32).
++ * Controlled by CONFIG_NFS_MULTIPATH_MAX_ADDRS (default 32).
 + */
 +#define DNFS_MAX_ADDR_STRLEN  64
 +
 +/**
-+ * struct dnfs_address_list - Parsed list of server addresses
++ * struct nfs_multipath_addrs - Parsed list of server addresses
 + * @count:  Number of valid addresses
 + * @addrs:  Array of sockaddr_storage addresses (variable length)
 + */
-+struct dnfs_address_list {
++struct nfs_multipath_addrs {
 +	unsigned int               count;
 +	unsigned int               max;
 +	struct sockaddr_storage    addrs[];
@@ -58,8 +58,8 @@ index 46aded5..8f5e3c1 100644
  		struct {
  			char		*hostname;
  			size_t		hostnamelen;
-+#if IS_ENABLED(CONFIG_DNFS)
-+			struct dnfs_address_list *dnfs_remoteaddrs;
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
++			struct nfs_multipath_addrs *dnfs_remoteaddrs;
 +			bool           dnfs_parsed;
 +#endif
  		} nfs_server;
@@ -69,8 +69,8 @@ index 46aded5..8f5e3c1 100644
  	unsigned long			addrlen;
  	struct sockaddr_storage		nfs_server_addr;
  	char				*server_name;
-+#if IS_ENABLED(CONFIG_DNFS)
-+	struct dnfs_address_list	*dnfs_remoteaddrs;
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
++	struct nfs_multipath_addrs	*dnfs_remoteaddrs;
 +#endif
 +
  };
@@ -80,12 +80,12 @@ index 46aded5..8f5e3c1 100644
  	struct nfs_client		*nfs_client;
  	struct nfs_iostats __percpu	*io_stats;
  	struct nfs_client_initdata	*init_data;
-+#if IS_ENABLED(CONFIG_DNFS)
-+	/* Parsed remote addresses for dnfs multipath.
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
++	/* Parsed remote addresses for NFS multipath.
 +	 * Set during mount, valid for the lifetime of the server.
 +	 * Freed during unmount (nfs_free_server).
 +	 */
-+	struct dnfs_address_list	*dnfs_remoteaddrs;
++	struct nfs_multipath_addrs	*dnfs_remoteaddrs;
 +#endif
  };
 

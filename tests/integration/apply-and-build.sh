@@ -4,7 +4,7 @@ set -euo pipefail
 
 KERNEL_SRC="${HOME}/kernel-build/linux-source-7.0.0"
 PATCH_DIR="${HOME}/kernel-build/patches"
-NEW_FILE="${HOME}/kernel-build/fs/nfs/dnfs_parse.c"
+NEW_FILE="${HOME}/kernel-build/fs/nfs/nfs_multipath.c"
 
 cd "${KERNEL_SRC}"
 
@@ -23,7 +23,7 @@ done < "${PATCH_DIR}/series"
 # Copy the new source file into the kernel tree.
 if [ -f "${NEW_FILE}" ]; then
 	cp "${NEW_FILE}" fs/nfs/
-	echo "Copied dnfs_parse.c"
+	echo "Copied nfs_multipath.c"
 fi
 
 # Configure and build.

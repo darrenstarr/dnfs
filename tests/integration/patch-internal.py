@@ -6,11 +6,11 @@ import re
 with open('internal.h') as f:
     content = f.read()
 
-# Add struct dnfs_address_list before NFS_SUPER_MAGIC if not present
+# Add struct nfs_multipath_addrs before NFS_SUPER_MAGIC if not present
 if 'dnfs_address_list' not in content:
     content = re.sub(
         r'(#define NFS_SUPER_MAGIC)',
-        r'struct dnfs_address_list {\n\tunsigned int count;\n\tunsigned int max;\n\tstruct sockaddr_storage addrs[];\n};\n\n\1',
+        r'struct nfs_multipath_addrs {\n\tunsigned int count;\n\tunsigned int max;\n\tstruct sockaddr_storage addrs[];\n};\n\n\1',
         content
     )
 
@@ -24,14 +24,14 @@ if 'dnfs_remoteaddrs' not in content:
         # Find the first occurrence of 'char *hostname;' followed by version field
         sub = re.search(r'(char\s*\*\s*hostname\s*;\s*\n\s*u32\s+version\s*;)', block)
         if sub:
-            replacement = sub.group(1) + '\n\t\tstruct dnfs_address_list *dnfs_remoteaddrs;\n\t\tbool dnfs_parsed;'
+            replacement = sub.group(1) + '\n\t\tstruct nfs_multipath_addrs *dnfs_remoteaddrs;\n\t\tbool dnfs_parsed;'
             content = content.replace(sub.group(1), replacement)
             print('Added dnfs fields after hostname/version')
         else:
             # Fallback: add after any version field in nfs_fs_context
             sub2 = re.search(r'(struct nfs_fs_context \{.*?)(u32\s+version\s*;)', content, re.DOTALL)
             if sub2:
-                replacement = sub2.group(2) + '\n\tstruct dnfs_address_list *dnfs_remoteaddrs;\n\tbool dnfs_parsed;'
+                replacement = sub2.group(2) + '\n\tstruct nfs_multipath_addrs *dnfs_remoteaddrs;\n\tbool dnfs_parsed;'
                 content = content.replace(sub2.group(2), replacement)
                 print('Added dnfs fields (fallback)')
             else:
