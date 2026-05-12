@@ -4,7 +4,7 @@
 
 Goal: **single NFS mount command** delivering 40+ Gb/s single-stream and 160+ Gb/s aggregate throughput against a Huawei OceanStor Pacific 9550 storage array. The server has 2x100GbE NICs (non-bonded, `enp65s0f0np0` + `enp65s0f1np1`). The storage presents 8 virtual ports (`fc07:2::11`–`fc07:2::18`) across 16x25GbE links in LACP bundles on CE6866 switches.
 
-Current state: achieved 180.3 Gb/s aggregate and 39.5 Gb/s single-stream using 8 separate NFSv4.1 mounts (one per storage IP) with stock kernel and `nconnect=16`. Working toward a single-mount solution using a custom kernel module — blocked by OceanStor assigning different NFSv4.1 clientids per virtual port (session trunking fails). Documented what we need from Huawei to fix this (`private/huawei-requirements.md`).
+Current state: achieved 180.3 Gb/s aggregate and 39.5 Gb/s single-stream using 8 separate NFSv4.1 mounts (one per storage IP) with stock kernel and `nconnect=16`. Working toward a single-mount solution using a custom kernel module — blocked by OceanStor assigning different NFSv4.1 clientids per virtual port (session trunking fails). Documented what we need from Huawei to fix this (`docs/huawei-requirements.md`).
 
 Tag: `pre-nfsv4.0` marks the point before the NFSv4.0 experiment. All active branch: `stage1/nfs41-multipath` (also `main` locally, but `main` is protected on GitHub and requires PR #13).
 
@@ -276,7 +276,7 @@ The transport creation WORKS — transports appear in `ss -tnp6` output. But the
 
 One change: **return the same `clientid` in `EXCHANGE_ID` responses across all virtual ports** for a given client `co_ownerid`. The `server_owner` and `server_scope` should already match (same storage system). No architectural change, no network reconfiguration, no shared state needed.
 
-Full requirements documented in `private/huawei-requirements.md`.
+Full requirements documented in `docs/huawei-requirements.md`.
 
 ### NFSv4.0 experiment (dead end)
 
