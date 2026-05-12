@@ -54,6 +54,26 @@ linux-source-7.0.0/    — partial Ubuntu 7.0.0 kernel source (NFS/SunRPC only)
 private/               — reference documentation, test machine configs (gitignored)
 ```
 
+## Community
+
+- **GitHub**: https://github.com/darrenstarr/dnfs
+- **Gitter chat**: https://app.gitter.im/#/room/#dnfs:gitter.im
+
 ## Contributing
 
 This project uses GitHub Issues for feature tracking and pull requests for all changes. The `main` branch is protected — all work flows through feature branches.
+
+## Packaging
+
+Build a `.deb` package for Ubuntu 26.04:
+
+```bash
+make deb
+```
+
+Installs the `dnfs-tools` package containing:
+
+- `dnfs-stress` — NFS multipath stress test
+- `dnfs-ansible` — Ansible playbooks for diskpool03 deployment
+- Kernel module patches and build scripts
+- Full documentation

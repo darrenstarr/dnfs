@@ -1,0 +1,6 @@
+# dnfs-tools: benchmark and deployment utilities
+tests/nfs-stress.py usr/bin/
+ansible usr/share/dnfs/
+docs/*.md usr/share/doc/dnfs-tools/
+AGENTS.md usr/share/doc/dnfs-tools/
+README.md usr/share/doc/dnfs-tools/

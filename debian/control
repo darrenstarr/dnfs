@@ -1,0 +1,31 @@
+Source: dnfs
+Section: kernel
+Priority: optional
+Maintainer: Darren Starr <darren@example.com>
+Build-Depends: debhelper-compat (= 10), dh-dkms, dh-sequence-dkms
+Standards-Version: 4.6.2
+Homepage: https://github.com/darrenstarr/dnfs
+
+Package: dnfs-dkms
+Architecture: amd64
+Depends: dkms (>= 2.8.0), ${misc:Depends}
+Description: DKMS source for NFS multipath client module
+ Builds and installs a modified nfs.ko kernel module with:
+  * NFS_MAX_CONNECTIONS bumped to 32 (up to 9 data TCP connections per mount)
+  * Per-mount multipath client creation for remoteaddrs= support
+  * Increased NFSv4.1 session slot concurrency
+ .
+ This DKMS package targets Ubuntu 26.04 (kernel 7.0.0-15-generic) and
+ the Huawei OceanStor Pacific 9550 storage array. It is part of the
+ Distributed NFS (dnfs) project.
+
+Package: dnfs-tools
+Architecture: all
+Depends: ${misc:Depends}, python3, fio, nfs-common, iproute2
+Recommends: ansible
+Description: NFS multipath tools and benchmarks
+ Tools for configuring and benchmarking NFS multipath against
+ Huawei OceanStor storage arrays:
+  * dnfs-stress — 20+ minute NFS stress/performance test
+  * Ansible playbooks for diskpool03 deployment (network, kernel, mounts, benchmark)
+  * Full documentation and kernel patch series

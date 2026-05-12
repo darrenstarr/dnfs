@@ -1,2 +1,9 @@
 private/
 *.orig
+*.deb
+*.buildinfo
+*.changes
+*.dsc
+*.tar.*
+dnfs-src/
+dkms.conf
