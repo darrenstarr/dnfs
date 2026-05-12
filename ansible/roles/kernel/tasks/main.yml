@@ -1,0 +1,27 @@
+---
+- name: Build and install patched NFS kernel module
+  nfs_module_build:
+    build_dir: "{{ kernel_build_dir }}"
+    headers_dir: "{{ kernel_headers_dir }}"
+    dest_dir: "{{ nfs_module_dest }}"
+    nconnect_max: "{{ nconnect_max }}"
+    force_rebuild: "{{ force_rebuild | default(false) }}"
+  register: kernel_result
+  tags: [kernel, build]
+
+- name: Report kernel module status
+  debug:
+    msg:
+      - "Build steps: {{ kernel_result.steps }}"
+      - "Loaded srcversion: {{ kernel_result.loaded_srcversion }}"
+      - "Installed srcversion: {{ kernel_result.installed_srcversion }}"
+      - "Nconnect max: {{ kernel_result.nconnect_max }}"
+  tags: [kernel, build]
+
+- name: Verify nconnect is applied
+  assert:
+    that:
+      - kernel_result.module_loaded
+      - kernel_result.installed_srcversion == kernel_result.loaded_srcversion
+    fail_msg: "NFS module not loaded or version mismatch"
+  tags: [kernel, verify]

@@ -1,0 +1,64 @@
+---
+# dbuild — Deploy NFS Multipath on diskpool cluster
+#
+# Applies a complete configuration to a fresh Ubuntu 26.04 installation
+# to achieve high-throughput NFSv4.1 multipath to Huawei OceanStor.
+#
+# Roles:
+#   1. network    — IPv6 host routes to split traffic across both 100GbE links
+#   2. kernel     — Build & install patched NFS module (nconnect bump)
+#   3. nfs_mount  — Mount 8 NFS shares (one per storage IP)
+#   4. benchmark  — Run fio tests and verify performance
+#
+# Usage:
+#   ansible-playbook -i inventory/production/hosts playbooks/deploy.yml
+#   ansible-playbook playbooks/deploy.yml --tags network,kernel
+#   ansible-playbook playbooks/deploy.yml --tags benchmark
+#   ansible-playbook playbooks/deploy.yml --skip-tags benchmark
+
+- name: Deploy NFS Multipath
+  hosts: diskpool
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Verify Ubuntu 26.04 kernel
+      ansible.builtin.shell: uname -r
+      register: kernel_version
+      changed_when: false
+      tags: [always]
+
+    - name: Check required tools
+      ansible.builtin.package:
+        name:
+          - nfs-common
+          - fio
+          - iproute2
+          - python3
+          - gcc
+          - make
+        state: present
+      tags: [always, deps]
+
+    - name: Ensure storage VLANs are up
+      ansible.builtin.shell: |
+        ip link set storagea.1001 up 2>/dev/null
+        ip link set storageb.1001 up 2>/dev/null
+        true
+      changed_when: false
+      tags: [always, network]
+
+  roles:
+    - role: network
+      tags: [network]
+    - role: kernel
+      tags: [kernel]
+    - role: nfs_mount
+      tags: [nfs]
+    - role: benchmark
+      tags: [benchmark]
+
+  post_tasks:
+    - name: Deployment complete
+      ansible.builtin.debug:
+        msg: "NFS multipath configured — {{ ansible_hostname }} ready"
+      tags: [always]

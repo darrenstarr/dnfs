@@ -1,0 +1,34 @@
+---
+- name: Run NFS performance benchmarks
+  nfs_benchmark:
+    mount_base: "{{ mount_base }}"
+    test_file_size_gb: "{{ test_file_size_gb }}"
+    runtime: "{{ benchmark_runtime_sec }}"
+    num_mounts: 8
+    write_test_file: true
+  register: bench_result
+  tags: [benchmark, test]
+
+- name: Display benchmark results
+  debug:
+    msg:
+      - "═══════════════════════════════════════"
+      - "  NFS MULTIPATH BENCHMARK RESULTS"
+      - "═══════════════════════════════════════"
+      - ""
+      - "Single-stream read:  {{ bench_result.results.single_stream_read.read_gbps_pretty }}"
+      - "Single-stream write: {{ bench_result.results.single_stream_write.write_gbps_pretty }}"
+      - "Aggregate read:      {{ bench_result.results.aggregate_read.read_gbps_pretty }}"
+      - "Aggregate write:     {{ bench_result.results.aggregate_write.write_gbps_pretty }}"
+      - ""
+      - "═══════════════════════════════════════"
+  when: bench_result.results is defined
+  tags: [benchmark, report]
+
+- name: Verify performance thresholds
+  assert:
+    that:
+      - bench_result.threshold_ok
+    fail_msg: "Performance below minimum: {{ bench_result.failed_thresholds }}"
+    success_msg: "All performance thresholds met"
+  tags: [benchmark, verify]

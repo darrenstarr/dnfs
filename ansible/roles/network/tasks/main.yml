@@ -1,0 +1,22 @@
+---
+- name: Apply IPv6 multipath routing
+  ipv6_route:
+    state: present
+    ensure_subnet: true
+    verify: true
+    routes:
+      - device: "{{ server_nic_a }}"
+        ips: "{{ storage_ips_nic_a }}"
+      - device: "{{ server_nic_b }}"
+        ips: "{{ storage_ips_nic_b }}"
+  register: route_result
+  tags: [network, routing]
+
+- name: Report routing status
+  debug:
+    msg:
+      - "Routes applied: {{ route_result.results | selectattr('changed', 'true') | list | length }} changed"
+      - "Unreachable: {{ route_result.unreachable }}"
+      - "Current host routes: {{ route_result.current_routes }}"
+  when: route_result.unreachable | length > 0 or ansible_verbosity > 0
+  tags: [network, routing]

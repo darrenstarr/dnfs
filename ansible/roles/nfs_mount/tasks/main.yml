@@ -1,0 +1,49 @@
+---
+- name: Mount NFS shares (one per storage IP)
+  nfs_multipath_mount:
+    state: mounted
+    mount_base: "{{ mount_base }}"
+    mounts:
+      - server_ip: "{{ storage_ips[0] }}"
+        export: "{{ storage_export }}"
+        options: "{{ mount_options }},nconnect={{ nconnect }}"
+      - server_ip: "{{ storage_ips[1] }}"
+        export: "{{ storage_export }}"
+        options: "{{ mount_options }},nconnect={{ nconnect }}"
+      - server_ip: "{{ storage_ips[2] }}"
+        export: "{{ storage_export }}"
+        options: "{{ mount_options }},nconnect={{ nconnect }}"
+      - server_ip: "{{ storage_ips[3] }}"
+        export: "{{ storage_export }}"
+        options: "{{ mount_options }},nconnect={{ nconnect }}"
+      - server_ip: "{{ storage_ips[4] }}"
+        export: "{{ storage_export }}"
+        options: "{{ mount_options }},nconnect={{ nconnect }}"
+      - server_ip: "{{ storage_ips[5] }}"
+        export: "{{ storage_export }}"
+        options: "{{ mount_options }},nconnect={{ nconnect }}"
+      - server_ip: "{{ storage_ips[6] }}"
+        export: "{{ storage_export }}"
+        options: "{{ mount_options }},nconnect={{ nconnect }}"
+      - server_ip: "{{ storage_ips[7] }}"
+        export: "{{ storage_export }}"
+        options: "{{ mount_options }},nconnect={{ nconnect }}"
+  register: mount_result
+  tags: [nfs, mount]
+
+- name: Report mount status
+  debug:
+    msg:
+      - "Mounts: {{ mount_result.mounts_count }} total"
+      - "TCP connections: {{ mount_result.total_connections }}"
+      - "Failures: {{ mount_result.failed_count }}"
+  tags: [nfs, mount]
+
+- name: Verify all mounts succeeded
+  assert:
+    that:
+      - mount_result.failed_count == 0
+      - mount_result.mounts_count == 8
+      - mount_result.total_connections >= 48
+    fail_msg: "Mount verification failed: {{ mount_result.failed }}"
+  tags: [nfs, verify]
