@@ -1,0 +1,44 @@
+#!/bin/sh
+# postinst for dnfs-dkms
+# Registers, builds, and installs the DKMS module after package installation.
+
+set -e
+
+NAME=dnfs
+VERSION=0.1.0
+
+case "$1" in
+    configure)
+        # Check if DKMS is available
+        if ! command -v dkms >/dev/null 2>&1; then
+            echo "WARNING: dkms not found. Module will not be built." >&2
+            exit 0
+        fi
+
+        # Add the module source to DKMS
+        echo "dnfs-dkms: registering DKMS module $NAME/$VERSION..."
+        dkms add -m $NAME -v $VERSION --rpm_safe_upgrade 2>/dev/null || true
+
+        # Build against the running kernel
+        echo "dnfs-dkms: building $NAME/$VERSION for $(uname -r)..."
+        dkms build -m $NAME -v $VERSION 2>&1 || {
+            echo "WARNING: dkms build failed. The stock NFS module will be used." >&2
+            echo "Check 'dkms status' and ensure linux-headers-$(uname -r) is installed." >&2
+            exit 0
+        }
+
+        # Install the module
+        echo "dnfs-dkms: installing $NAME/$VERSION..."
+        dkms install -m $NAME -v $VERSION 2>&1 || true
+
+        echo "dnfs-dkms: DKMS module installed. Reboot or run: modprobe nfs"
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "postinst called with unknown argument: $1" >&2
+        ;;
+esac
+
+exit 0
