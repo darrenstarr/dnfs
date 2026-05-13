@@ -27,5 +27,6 @@ Description: NFS multipath tools and benchmarks
  Tools for configuring and benchmarking NFS multipath against
  Huawei OceanStor storage arrays:
   * dnfs-stress — 20+ minute NFS stress/performance test
-  * Ansible playbooks for diskpool03 deployment (network, kernel, mounts, benchmark)
+  * Ansible playbooks for diskpool03 deployment (network, kernel, mounts,
+    benchmark)
   * Full documentation and kernel patch series
