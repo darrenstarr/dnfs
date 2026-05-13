@@ -7,7 +7,7 @@ Standards-Version: 4.6.2
 Homepage: https://github.com/darrenstarr/dnfs
 
 Package: dnfs-dkms
-Architecture: amd64
+Architecture: all
 Depends: dkms (>= 2.8.0), ${misc:Depends}
 Description: DKMS source for NFS multipath client module
  Builds and installs a modified nfs.ko kernel module with:
