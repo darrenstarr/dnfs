@@ -4,6 +4,7 @@
 #include <linux/sunrpc/addr.h>
 #include <net/handshake.h>
 #include "internal.h"
+#include "nfs_multipath.h"
 #include "nfs3_fs.h"
 #include "netns.h"
 #include "sysfs.h"
@@ -51,6 +52,73 @@ static inline void nfs_init_server_aclclient(struct nfs_server *server)
 }
 #endif
 
+
+static void nfs3_multipath_setup(struct nfs_server *server)
+{
+        struct nfs_multipath_addrs *remotes = nfs_multipath_get_addrs();
+        struct nfs_multipath_addrs *locals = nfs_multipath_get_local_addrs();
+        struct rpc_clnt *clnt = server->client;
+        int li, ri, count = 0;
+
+        if (!remotes || remotes->count == 0) {
+                nfs_multipath_free_addrs(remotes);
+                nfs_multipath_free_addrs(locals);
+                return;
+        }
+
+        /* Full mesh: every local x every remote */
+        for (li = 0; locals && li < locals->count; li++) {
+                for (ri = 0; ri < remotes->count; ri++) {
+                        struct xprt_create xprtargs = {
+                                .ident = XPRT_TRANSPORT_TCP,
+                                .net = server->nfs_client->cl_net,
+                                .srcaddr = (struct sockaddr *)&locals->addrs[li],
+                                .dstaddr = (struct sockaddr *)&remotes->addrs[ri],
+                                .addrlen = (remotes->addrs[ri].ss_family == AF_INET6) ?
+                                        sizeof(struct sockaddr_in6) :
+                                        sizeof(struct sockaddr_in),
+                                .servername = "nfs-multipath",
+                        };
+
+                        /* Set port */
+                        if (remotes->addrs[ri].ss_family == AF_INET6)
+                                ((struct sockaddr_in6 *)&remotes->addrs[ri])->sin6_port = htons(NFS_PORT);
+                        else
+                                ((struct sockaddr_in *)&remotes->addrs[ri])->sin_port = htons(NFS_PORT);
+
+                        if (rpc_clnt_add_xprt(clnt, &xprtargs, NULL, NULL) == 0)
+                                count++;
+                }
+        }
+
+        /* If no local addrs specified, create one transport per remote */
+        if ((!locals || locals->count == 0) && remotes->count > 0) {
+                for (ri = 0; ri < remotes->count; ri++) {
+                        struct xprt_create xprtargs = {
+                                .ident = XPRT_TRANSPORT_TCP,
+                                .net = server->nfs_client->cl_net,
+                                .dstaddr = (struct sockaddr *)&remotes->addrs[ri],
+                                .addrlen = (remotes->addrs[ri].ss_family == AF_INET6) ?
+                                        sizeof(struct sockaddr_in6) :
+                                        sizeof(struct sockaddr_in),
+                                .servername = "nfs-multipath",
+                        };
+                        if (remotes->addrs[ri].ss_family == AF_INET6)
+                                ((struct sockaddr_in6 *)&remotes->addrs[ri])->sin6_port = htons(NFS_PORT);
+                        else
+                                ((struct sockaddr_in *)&remotes->addrs[ri])->sin_port = htons(NFS_PORT);
+                        if (rpc_clnt_add_xprt(clnt, &xprtargs, NULL, NULL) == 0)
+                                count++;
+                }
+        }
+
+        nfs_multipath_free_addrs(remotes);
+        nfs_multipath_free_addrs(locals);
+
+        if (count > 0)
+                pr_info("NFSv3 multipath: added %d transports\n", count);
+}
+
 struct nfs_server *nfs3_create_server(struct fs_context *fc)
 {
 	struct nfs_server *server = nfs_create_server(fc);
@@ -58,6 +126,7 @@ struct nfs_server *nfs3_create_server(struct fs_context *fc)
 	/* Create a client RPC handle for the NFS v3 ACL management interface */
 	if (!IS_ERR(server))
 		nfs_init_server_aclclient(server);
+	nfs3_multipath_setup(server);
 	return server;
 }
 
@@ -69,6 +138,7 @@ struct nfs_server *nfs3_clone_server(struct nfs_server *source,
 	struct nfs_server *server = nfs_clone_server(source, fh, fattr, flavor);
 	if (!IS_ERR(server) && !IS_ERR(source->client_acl))
 		nfs_init_server_aclclient(server);
+	nfs3_multipath_setup(server);
 	return server;
 }
 
