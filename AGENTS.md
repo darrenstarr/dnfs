@@ -1,12 +1,18 @@
 # dnfs — Distributed NFS multipath client project
 
+## WORKFLOW RULE: ALWAYS PUSH AFTER COMMITS
+
+After EVERY `git commit`, immediately run `git push origin main`. Never leave
+commits unpushed. The remote is the source of truth. This applies to ALL
+changes — code, docs, tags, everything.
+
 ## Overview
 
 Goal: **single NFS mount command** delivering 40+ Gb/s single-stream and 160+ Gb/s aggregate throughput against a Huawei OceanStor Pacific 9550 storage array. The server has 2x100GbE NICs (non-bonded, `enp65s0f0np0` + `enp65s0f1np1`). The storage presents 8 virtual ports (`fc07:2::11`–`fc07:2::18`) across 16x25GbE links in LACP bundles on CE6866 switches.
 
-Current state: achieved 180.3 Gb/s aggregate and 39.5 Gb/s single-stream using 8 separate NFSv4.1 mounts (one per storage IP) with stock kernel and `nconnect=16`. Working toward a single-mount solution using a custom kernel module — blocked by OceanStor assigning different NFSv4.1 clientids per virtual port (session trunking fails). Documented what we need from Huawei to fix this (`docs/huawei-requirements.md`).
+Current state: **Switching to NFSv3 multipath.** NFSv4.1 sessions and stateids block multipath on the OceanStor (different clientids per virtual port). NFSv3 has no sessions, no stateids, no trunking — transports just work. eNFS proved this at production scale. Analysis at `docs/nfsv3-vs-nfsv41.md`.
 
-Tag: `pre-nfsv4.0` marks the point before the NFSv4.0 experiment. All active branch: `stage1/nfs41-multipath` (also `main` locally, but `main` is protected on GitHub and requires PR #13).
+Tags: `pre-nfsv4.0` (before v4.0 experiment), `enfs-analysis` (after eNFS code audit), `pre-nfsv3` (before switching to NFSv3).
 
 ---
 
