@@ -520,3 +520,61 @@ sudo depmod -a
 sudo modprobe nfs
 '
 ```
+
+---
+
+## Debian Packaging (DKMS)
+
+### How the .deb package works
+
+Two binary packages are built from `make deb`:
+
+```
+dnfs-dkms_0.1.0_all.deb   — DKMS kernel module source (arch-independent)
+dnfs-tools_0.1.0_all.deb  — Stress test + Ansible + docs (arch-independent)
+```
+
+### Critical packaging files
+
+The DKMS package requires these files to work correctly with `dh_dkms`:
+
+| File | Purpose |
+|------|---------|
+| `dkms.conf` (repo root) | DKMS module config: PACKAGE_NAME, MAKE command, BUILT_MODULE location |
+| `debian/dnfs-dkms.dkms` | **Single line: `dkms.conf`** — tells `dh_dkms` to find `dkms.conf` in the installed source tree |
+| `debian/dnfs-dkms.install` | Installs `dkms.conf` and source tree to `/usr/src/dnfs-0.1.0/` |
+| `debian/control` | `Build-Depends: dh-dkms` (enables `dh --with dkms`), `Architecture: all` for DKMS source |
+| `debian/rules` | `%: dh $@ --with dkms` — the `--with dkms` triggers automatic postinst/prerm generation |
+
+### How dh_dkms works
+
+`dh_dkms` scans for `debian/<package>.dkms` files. Each `.dkms` file contains a relative path to a `dkms.conf` file in the installed package tree (e.g., just `dkms.conf` meaning `/usr/src/dnfs-0.1.0/dkms.conf`). From this, `dh_dkms` auto-generates the `postinst` (dkms add/build/install) and `prerm` (dkms remove) maintainer scripts.
+
+**Do NOT write manual `postinst`/`prerm` scripts** — let `dh_dkms` handle it via the `.dkms` file. Manual scripts will be silently replaced during the `dpkg-buildpackage` process and may miss edge cases (abort-upgrade, etc.).
+
+### DKMS source tree structure
+
+```
+/usr/src/dnfs-0.1.0/
+├── dkms.conf              # DKMS module config
+└── fs/nfs/                # Full kernel source tree (80+ .c/.h files)
+    ├── Makefile
+    ├── Kconfig
+    ├── blocklayout/        # pNFS layout subdirectories
+    ├── filelayout/
+    ├── flexfilelayout/
+    ├── nfs_multipath.c     # Our multipath parser
+    ├── nfs_multipath.h
+    └── *.c, *.h            # Stock NFS client source files
+```
+
+### Build verification
+
+After `make deb`, test with:
+```bash
+sudo dpkg -i dnfs-dkms_0.1.0_all.deb
+dkms status  # should show "installed"
+sudo modprobe nfs
+mount -t nfs4 -o nconnect=16 ... [fc07:2::11]:/dCache /mnt
+ss -tnp6 dst [fc07:2::11] | wc -l  # should show 10 connections
+```
