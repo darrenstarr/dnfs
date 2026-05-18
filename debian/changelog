@@ -4,4 +4,4 @@ dnfs (0.1.0) noble; urgency=medium
   * Bumps NFS_MAX_CONNECTIONS from 16 to 32 for higher per-mount throughput.
   * Includes nfs-stress benchmark tool and ansible deployment playbooks.
 
- -- Darren Starr <darren@example.com>  Mon, 12 May 2026 00:00:00 +0000
+ -- Darren Starr <darren@example.com>  Tue, 12 May 2026 00:00:00 +0000
