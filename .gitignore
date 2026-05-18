@@ -7,3 +7,8 @@ private/
 *.tar.*
 dnfs-src/
 dkms.conf
+debian/tmp
+tmp/
+*.deb
+*.buildinfo
+*.changes
