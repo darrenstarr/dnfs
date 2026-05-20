@@ -23,6 +23,7 @@
 
 #include "nfs.h"
 #include "internal.h"
+#include "nfs_multipath.h"
 
 #include "nfstrace.h"
 
@@ -689,6 +690,10 @@ static int nfs_fs_context_parse_param(struct fs_context *fc,
 			goto out_bad_transport;
 		ctx->nfs_server.protocol = ret;
 		break;
+	case Opt_remoteaddrs:
+		return nfs_multipath_parse(NULL, param->string);
+	case Opt_localaddrs:
+		return nfs_multipath_parse_local(NULL, param->string);
 	case Opt_acl:
 		if (result.negated)
 			ctx->flags |= NFS_MOUNT_NOACL;

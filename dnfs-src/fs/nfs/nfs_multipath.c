@@ -10,83 +10,131 @@
 #define MAX_OPT_STRLEN 4096
 
 static struct nfs_multipath_addrs *g_addrs;
+static struct nfs_multipath_addrs *g_local_addrs;
 static DEFINE_MUTEX(g_addrs_lock);
+
+static int parse_addr_list(const char *value, struct nfs_multipath_addrs **dst)
+{
+	struct nfs_multipath_addrs *list;
+	const char *p, *next;
+	unsigned int count = 0, max_count;
+	int ret;
+
+	if (!value || !*value)
+		return -EINVAL;
+
+	if (strlen(value) > MAX_OPT_STRLEN)
+		return -E2BIG;
+
+	p = value;
+	while (*p) {
+		while (*p == '~')
+			p++;
+		if (!*p)
+			break;
+		count++;
+		p = strchr(p, '~');
+		if (!p)
+			break;
+		p++;
+	}
+
+	if (count == 0)
+		return -EINVAL;
+
+	max_count = CONFIG_NFS_MULTIPATH_MAX_ADDRS;
+	if (count > max_count)
+		return -E2BIG;
+
+	list = kzalloc(sizeof(*list) + (count * sizeof(list->addrs[0])), GFP_KERNEL);
+	if (!list)
+		return -ENOMEM;
+
+	list->count = 0;
+	list->max = count;
+
+	p = value;
+	while (*p && list->count < count) {
+		size_t token_len;
+
+		while (*p == '~')
+			p++;
+		if (!*p)
+			break;
+
+		next = strchr(p, '~');
+		if (next)
+			token_len = next - p;
+		else
+			token_len = strlen(p);
+
+		if (!rpc_pton(&init_net, p, token_len,
+			      (struct sockaddr *)&list->addrs[list->count],
+			      sizeof(list->addrs[list->count]))) {
+			pr_warn("NFS multipath: bad addr '%.*s'\n", (int)token_len, p);
+			ret = -EINVAL;
+			goto out_free;
+		}
+		list->count++;
+
+		if (next)
+			p = next + 1;
+		else
+			break;
+	}
+
+	mutex_lock(&g_addrs_lock);
+	kfree(*dst);
+	*dst = list;
+	mutex_unlock(&g_addrs_lock);
+	pr_info("mpath: stored %d addrs\n", list->count);
+	return 0;
+
+out_free:
+	kfree(list);
+	return ret;
+}
 
 int nfs_multipath_parse(void *unused, const char *value)
 {
+	pr_info("mpath: entry value=%s\n", value);
+	return parse_addr_list(value, &g_addrs);
+}
+
+int nfs_multipath_parse_local(void *unused, const char *value)
+{
+	pr_info("mpath: localaddrs value=%s\n", value);
+	return parse_addr_list(value, &g_local_addrs);
+}
+
+static struct nfs_multipath_addrs *get_and_clear(struct nfs_multipath_addrs **p)
+{
 	struct nfs_multipath_addrs *list;
-	int count = 0;
-	int i;
-	size_t val_len;
-	const char *s;
-
-	/* DEBUG: entry */
-	printk(KERN_CRIT "mpath: entry value=%s\n", value ? value : "NULL");
-
-	if (!value) { printk(KERN_CRIT "mpath: null value\n"); return -EINVAL; }
-	val_len = strlen(value);
-	if (val_len > MAX_OPT_STRLEN) { printk(KERN_CRIT "mpath: too long %zu\n", val_len); return -E2BIG; }
-	if (val_len == 0) { printk(KERN_CRIT "mpath: empty\n"); return -EINVAL; }
-
-	for (s = value; *s; s++) {
-		if (*s == '~') count++;
-	}
-	count++;
-	printk(KERN_CRIT "mpath: token count=%d\n", count);
-
-	if (count > CONFIG_NFS_MULTIPATH_MAX_ADDRS) { printk(KERN_CRIT "mpath: too many tokens\n"); return -E2BIG; }
-
-	list = kzalloc(sizeof(*list) + count * sizeof(list->addrs[0]), GFP_KERNEL);
-	if (!list) { printk(KERN_CRIT "mpath: alloc fail\n"); return -ENOMEM; }
-
-	s = value;
-	for (i = 0; i < count; i++) {
-		const char *end = strchr(s, '~');
-		size_t len = end ? (size_t)(end - s) : strlen(s);
-
-		while (len > 0 && *s == '~') { s++; len--; }
-		if (len == 0) { count--; i--; s++; continue; }
-
-		printk(KERN_CRIT "mpath: parsing addr %d: %.*s (len=%zu)\n", i, (int)len, s, len);
-
-		if (!rpc_pton(&init_net, s, len,
-			(struct sockaddr *)&list->addrs[i],
-			sizeof(list->addrs[i]))) {
-			printk(KERN_CRIT "mpath: rpc_pton failed for %.*s\n", (int)len, s);
-			kfree(list);
-			return -EINVAL;
-		}
-		list->count++;
-		s = end ? end + 1 : s + len;
-	}
-
-	if (list->count == 0) { printk(KERN_CRIT "mpath: no valid addrs\n"); kfree(list); return -EINVAL; }
-
 	mutex_lock(&g_addrs_lock);
-	kfree(g_addrs);
-	g_addrs = list;
+	list = *p;
+	*p = NULL;
 	mutex_unlock(&g_addrs_lock);
-	printk(KERN_CRIT "mpath: stored %d addrs\n", list->count);
-	return 0;
+	if (list)
+		pr_info("mpath: consumed %d addrs\n", list->count);
+	return list;
 }
 
 struct nfs_multipath_addrs *nfs_multipath_get_addrs(void)
 {
-	struct nfs_multipath_addrs *list;
-	mutex_lock(&g_addrs_lock);
-	list = g_addrs;
-	g_addrs = NULL;
-	mutex_unlock(&g_addrs_lock);
-	if (list) printk(KERN_CRIT "mpath: consumed %d addrs\n", list->count);
-	return list;
+	return get_and_clear(&g_addrs);
 }
+EXPORT_SYMBOL(nfs_multipath_get_addrs);
+
+struct nfs_multipath_addrs *nfs_multipath_get_local_addrs(void)
+{
+	return get_and_clear(&g_local_addrs);
+}
+EXPORT_SYMBOL(nfs_multipath_get_local_addrs);
 
 void nfs_multipath_free_addrs(struct nfs_multipath_addrs *list)
 {
-	if (list) printk(KERN_CRIT "mpath: freeing %d addrs\n", list->count);
+	if (list)
+		pr_info("mpath: freeing %d addrs\n", list->count);
 	kfree(list);
 }
-
-EXPORT_SYMBOL(nfs_multipath_parse);
-EXPORT_SYMBOL(nfs_multipath_get_addrs);
 EXPORT_SYMBOL(nfs_multipath_free_addrs);
