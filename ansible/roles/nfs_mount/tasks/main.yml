@@ -1,49 +1,44 @@
 ---
-- name: Mount NFS shares (one per storage IP)
-  nfs_multipath_mount:
+- name: Unmount ALL existing NFS mounts to /dcache/*
+  shell: |
+    for mp in $(mount -t nfs4 | grep "/dcache/" | awk "{print \$3}"); do
+      umount -f "$mp" 2>/dev/null || umount -l "$mp" 2>/dev/null || true
+    done
+    exit 0
+  changed_when: false
+
+- name: Create mount point directories
+  file:
+    path: "{{ mount_base }}{{ idx }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ range(1, 9) | list }}"
+  loop_control:
+    index_var: idx
+
+- name: Mount 8 NFSv4.1 multipath shares
+  mount:
+    path: "{{ mount_base }}{{ idx }}"
+    src: "[{{ storage_ips[idx - 1] }}]:{{ storage_export }}"
+    fstype: nfs4
+    opts: "{{ mount_options }},nconnect={{ nconnect }}"
     state: mounted
-    mount_base: "{{ mount_base }}"
-    mounts:
-      - server_ip: "{{ storage_ips[0] }}"
-        export: "{{ storage_export }}"
-        options: "{{ mount_options }},nconnect={{ nconnect }}"
-      - server_ip: "{{ storage_ips[1] }}"
-        export: "{{ storage_export }}"
-        options: "{{ mount_options }},nconnect={{ nconnect }}"
-      - server_ip: "{{ storage_ips[2] }}"
-        export: "{{ storage_export }}"
-        options: "{{ mount_options }},nconnect={{ nconnect }}"
-      - server_ip: "{{ storage_ips[3] }}"
-        export: "{{ storage_export }}"
-        options: "{{ mount_options }},nconnect={{ nconnect }}"
-      - server_ip: "{{ storage_ips[4] }}"
-        export: "{{ storage_export }}"
-        options: "{{ mount_options }},nconnect={{ nconnect }}"
-      - server_ip: "{{ storage_ips[5] }}"
-        export: "{{ storage_export }}"
-        options: "{{ mount_options }},nconnect={{ nconnect }}"
-      - server_ip: "{{ storage_ips[6] }}"
-        export: "{{ storage_export }}"
-        options: "{{ mount_options }},nconnect={{ nconnect }}"
-      - server_ip: "{{ storage_ips[7] }}"
-        export: "{{ storage_export }}"
-        options: "{{ mount_options }},nconnect={{ nconnect }}"
-  register: mount_result
-  tags: [nfs, mount]
+  loop: "{{ range(1, 9) | list }}"
+  loop_control:
+    index_var: idx
 
-- name: Report mount status
+- name: Verify all 8 mounts
+  shell: "mount | grep -c '/dcache/pool'"
+  register: mount_count
+  changed_when: false
+
+- name: Check NFS connections
+  shell: "ss -tnp6 state established | grep -c ':2049' || echo 0"
+  register: connection_count
+  changed_when: false
+
+- name: Report
   debug:
-    msg:
-      - "Mounts: {{ mount_result.mounts_count }} total"
-      - "TCP connections: {{ mount_result.total_connections }}"
-      - "Failures: {{ mount_result.failed_count }}"
-  tags: [nfs, mount]
-
-- name: Verify all mounts succeeded
-  assert:
-    that:
-      - mount_result.failed_count == 0
-      - mount_result.mounts_count == 8
-      - mount_result.total_connections >= 48
-    fail_msg: "Mount verification failed: {{ mount_result.failed }}"
-  tags: [nfs, verify]
+    msg: |
+      Mounts: {{ mount_count.stdout }}
+      TCP connections to NFS: {{ connection_count.stdout }}

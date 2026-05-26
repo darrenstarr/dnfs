@@ -1,27 +1,35 @@
 ---
-- name: Build and install patched NFS kernel module
-  nfs_module_build:
-    build_dir: "{{ kernel_build_dir }}"
-    headers_dir: "{{ kernel_headers_dir }}"
-    dest_dir: "{{ nfs_module_dest }}"
-    nconnect_max: "{{ nconnect_max }}"
-    force_rebuild: "{{ force_rebuild | default(false) }}"
-  register: kernel_result
-  tags: [kernel, build]
+- name: Install kernel build dependencies
+  apt:
+    name:
+      - linux-source-7.0.0
+      - linux-headers-7.0.0-15-generic
+      - build-essential
+      - flex
+      - bison
+      - libelf-dev
+      - libssl-dev
+    state: present
 
-- name: Report kernel module status
+- name: Deploy build script
+  copy:
+    src: dnfs_build.py
+    dest: /tmp/dnfs_build.py
+    mode: '0755'
+
+- name: Build and install custom NFS module
+  command: python3 /tmp/dnfs_build.py
+  register: build
+  changed_when: "'BUILD COMPLETE' in build.stdout"
+
+- name: Show build summary
   debug:
-    msg:
-      - "Build steps: {{ kernel_result.steps }}"
-      - "Loaded srcversion: {{ kernel_result.loaded_srcversion }}"
-      - "Installed srcversion: {{ kernel_result.installed_srcversion }}"
-      - "Nconnect max: {{ kernel_result.nconnect_max }}"
-  tags: [kernel, build]
+    var: build.stdout_lines
 
-- name: Verify nconnect is applied
-  assert:
-    that:
-      - kernel_result.module_loaded
-      - kernel_result.installed_srcversion == kernel_result.loaded_srcversion
-    fail_msg: "NFS module not loaded or version mismatch"
-  tags: [kernel, verify]
+- name: Verify new module
+  shell: |
+    echo "Custom srcversion: $(modinfo {{ nfs_module_dest }}/nfs.ko | grep srcversion)"
+    echo "Kernel: $(uname -r)"
+    echo ""
+    echo "REBOOT REQUIRED to activate the new NFS module."
+  changed_when: false

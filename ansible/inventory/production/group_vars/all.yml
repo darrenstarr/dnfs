@@ -1,9 +1,5 @@
 ---
-# NFS Multipath Configuration
-# These values define the storage topology and mount parameters.
-
-# --- Storage Array (Huawei OceanStor) ---
-# All virtual ports on the storage array
+# Storage array: Huawei OceanStor Pacific 9550, 8 virtual ports
 storage_ips:
   - "fc07:2::11"
   - "fc07:2::12"
@@ -16,16 +12,7 @@ storage_ips:
 
 storage_export: "/dCache"
 
-# --- Server Network Interfaces ---
-# Two 100GbE NICs connected to the storage switches
-server_nic_a: "storagea.1001"  # VLAN 1001 on enp65s0f0np0
-server_nic_b: "storageb.1001"  # VLAN 1001 on enp65s0f1np1
-
-server_ip_a: "fc07:2::1:a:24"
-server_ip_b: "fc07:2::2:a:24"
-
-# Which storage IPs route through which NIC
-# Balanced: 4 IPs per NIC
+# NIC assignments for routing (same on both hosts)
 storage_ips_nic_a:
   - "fc07:2::11"
   - "fc07:2::13"
@@ -38,20 +25,18 @@ storage_ips_nic_b:
   - "fc07:2::16"
   - "fc07:2::18"
 
-# --- Mount Configuration ---
+# Per-host server IPs defined in host_vars
+# diskpool01: a=fc07:2::1:a:22, b=fc07:2::2:a:22
+# diskpool03: a=fc07:2::1:a:24, b=fc07:2::2:a:24
+
+# Mount config
 mount_base: "/dcache/pool"
 nconnect: 16
 rsize: 1048576
 wsize: 1048576
-mount_options: "vers=4.1,proto=tcp6,rsize={{ rsize }},wsize={{ wsize }},noatime,hard"
+mount_options: "vers=4.1,proto=tcp6,rsize={{ rsize }},wsize={{ wsize }},noatime,hard,nconnect={{ nconnect }}"
 
-# --- Kernel Module Build ---
-kernel_build_dir: "/home/netadmin/kernel-build/linux-source-7.0.0"
+# Kernel module build
+kernel_src_dir: "/home/netadmin/kernel-build/linux-source-7.0.0"
 kernel_headers_dir: "/lib/modules/7.0.0-15-generic/build"
 nfs_module_dest: "/lib/modules/7.0.0-15-generic/updates"
-nconnect_max: 32
-include_multipath: false  # set true when Huawei fixes clientid issue
-
-# --- Benchmark ---
-test_file_size_gb: 20
-benchmark_runtime_sec: 10

@@ -1,0 +1,4 @@
+server_ip_a: "fc07:2::1:a:22"
+server_ip_b: "fc07:2::2:a:22"
+nic_a: "storagea.1001"
+nic_b: "storageb.1001"

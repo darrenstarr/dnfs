@@ -1,15 +1,9 @@
-# dnfs — Diskpool Cluster Inventory
-#
-# diskpool03 is the NFS client test machine.
-# It connects to the Huawei OceanStor via two 100GbE links.
-# The jump host chain is: local → jumpy → diskpoolmgmt → diskpool03
+[dcache]
+diskpool01
+diskpool03
 
-[diskpool]
-diskpool03 ansible_host=diskpool03.gridstorage.uiocloud.no
-
-[diskpool:vars]
+[dcache:vars]
 ansible_user=netadmin
 ansible_become=yes
 ansible_become_method=sudo
-ansible_ssh_common_args='-o ProxyJump=darren@158.36.191.160:2222,darren@109.105.125.102'
-ansible_ssh_pipelining=yes
+ansible_python_interpreter=/usr/bin/python3
