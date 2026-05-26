@@ -12,3 +12,15 @@ tmp/
 *.deb
 *.buildinfo
 *.changes
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/dnfs-dkms.debhelper.log
+debian/dnfs-dkms.postinst.debhelper
+debian/dnfs-dkms.prerm.debhelper
+debian/dnfs-dkms.substvars
+debian/dnfs-dkms/debhelper-build-stamp
+debian/dnfs-dkms/DEBIAN/
+debian/dnfs-tools.debhelper.log
+debian/dnfs-tools.substvars
+debian/dnfs-tools/DEBIAN/
+debian/files
