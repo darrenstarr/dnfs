@@ -24,3 +24,6 @@ debian/dnfs-tools.debhelper.log
 debian/dnfs-tools.substvars
 debian/dnfs-tools/DEBIAN/
 debian/files
+debian/dnfs-dkms/
+debian/dnfs-tools/
+debian/files

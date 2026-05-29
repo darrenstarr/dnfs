@@ -43,3 +43,30 @@ nearly saturating the 100GbE link.
 ## Build Recipes
 See `ansible/dnfs_build.py` for one-shot build script.
 See `ansible/roles/kernel/tasks/main.yml` for Ansible-based build.
+
+## Cross-Machine Transfer
+
+### Raw Network (iperf3, storage VLAN)
+| Direction | Single stream | 4 streams |
+|-----------|--------------|-----------|
+| diskpool01 → diskpool03 | 37 Gb/s | 89 Gb/s |
+| diskpool03 → diskpool01 | 20 Gb/s | 78 Gb/s |
+
+### Single-stream NFS-backed transfer (NFSv4.1 + async pipeline + TCP)
+- 20GB file: 1164 MB/s (9.8 Gb/s)
+- Bottleneck: single TCP connection serializes reads and writes
+
+### Source-based policy routing
+```bash
+# /etc/iproute2/rt_tables
+100 storagea
+200 storageb
+
+# Per-table routes
+ip -6 route add fc07:2::/64 dev storagea.1001 table 100
+ip -6 route add fc07:2::/64 dev storageb.1001 table 200
+
+# Policy rules
+ip -6 rule add from fc07:2::1:a:22 table 100 pref 100
+ip -6 rule add from fc07:2::2:a:22 table 200 pref 100
+```

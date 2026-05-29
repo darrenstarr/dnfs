@@ -584,3 +584,55 @@ sudo modprobe nfs
 mount -t nfs4 -o nconnect=16 ... [fc07:2::11]:/dCache /mnt
 ss -tnp6 dst [fc07:2::11] | wc -l  # should show 10 connections
 ```
+
+---
+
+## Source-Based Policy Routing
+
+To split NFS traffic across both 100GE NICs, use policy routing based on source IP:
+
+```bash
+# Create routing tables (persistent: add to /etc/iproute2/rt_tables)
+echo "100 storagea" >> /etc/iproute2/rt_tables
+echo "200 storageb" >> /etc/iproute2/rt_tables
+
+# Per-table routes (subnet only, all destinations reachable via each NIC)
+ip -6 route add fc07:2::/64 dev storagea.1001 table 100
+ip -6 route add fc07:2::/64 dev storageb.1001 table 200
+
+# Policy rules: select table based on source IP
+ip -6 rule add from fc07:2::1:a:22 table 100 pref 100
+ip -6 rule add from fc07:2::2:a:22 table 200 pref 100
+
+# Verify:
+ip -6 route get fc07:2::11 from fc07:2::1:a:22  # should show "dev storagea.1001"
+ip -6 route get fc07:2::11 from fc07:2::2:a:22  # should show "dev storageb.1001"
+```
+
+**diskpool03 source IPs**: fc07:2::1:a:24 (storagea), fc07:2::2:a:24 (storageb)
+
+This is required after every reboot. The ansible `network` role handles this.
+
+### Switch Topology (CE6866)
+
+```
+diskpool01 ─── storagea.1001 (100GE) ─── ce6866a Eth-Trunk1 (2×100GE)
+           └── storageb.1001 (100GE) ─── ce6866b Eth-Trunk1 (2×100GE)
+
+Each switch: 8×Eth-Trunk9-16 (1×25GE each) → 8 storage controllers
+Each controller: fc07:2::11-::18, one port per switch
+```
+
+### Cross-Machine Performance (storage VLAN, NFSv4.1 + nconnect=16)
+
+| Test | Throughput |
+|------|-----------|
+| Raw network (iperf3, 4 streams) | 89 Gb/s |
+| Single-stream NFS→TCP→NFS | 9.8 Gb/s |
+
+Multi-stream transfer with NFS async pipeline + 4 TCP streams: in progress.
+
+## Commit Policy
+
+NEVER commit without `git push` immediately after. Every commit goes to remote.
+On feature branches, push with `git push -u origin <branch>` on first push.
