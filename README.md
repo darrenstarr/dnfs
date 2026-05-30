@@ -77,3 +77,17 @@ Installs the `dnfs-tools` package containing:
 - `dnfs-ansible` — Ansible playbooks for diskpool03 deployment
 - Kernel module patches and build scripts
 - Full documentation
+
+## Stage 2: I/O Striping (in progress)
+
+See `patches/stage2-striping.py` and `patches/fix_striping.sh`.
+
+Approach: intercept in `pagelist.c: nfs_pageio_setup_mirroring()` to create N mirrors (one per multipath transport), then pin each mirror's RPC task to a different transport via `rpc_task_set_xprt()`.
+
+Files patched:
+- `internal.h`: multipath transport storage in nfs_server
+- `nfs3client.c`: store created transports for striping
+- `pagelist.c`: mirror setup + transport pinning
+- `nfs4proc.c`: remove static from inline declarations
+
+Requires `include <linux/sunrpc/clnt.h>` in pagelist.c.
