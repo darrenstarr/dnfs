@@ -69,58 +69,90 @@ NFSv3 writes are 2.3× slower than reads. Each write RPC blocks on server acknow
 
 ## Network Topology
 
+### Physical Port Mapping
+
+**16 VPC/MLAG pairs (8 backend + 8 frontend) across two CE6866 switches:**
+
+| Controller Mgmt IP | Service IP | Backend Trunk (A) | Frontend Trunk (A) |
+|-------------------|------------|-------------------|--------------------|
+| fc07:3:0:1::11 | fc07:2::11 | Eth-Trunk9, 25GE1/0/9 | Eth-Trunk21, 25GE1/0/1 |
+| fc07:3:0:1::12 | fc07:2::12 | Eth-Trunk10, 25GE1/0/10 | Eth-Trunk22 |
+| fc07:3:0:1::13 | fc07:2::13 | Eth-Trunk11 | Eth-Trunk23 |
+| fc07:3:0:1::14 | fc07:2::14 | Eth-Trunk12 | Eth-Trunk24 |
+| fc07:3:0:1::15 | fc07:2::15 | Eth-Trunk13 | Eth-Trunk25 |
+| fc07:3:0:1::16 | fc07:2::16 | Eth-Trunk14 | Eth-Trunk26 |
+| fc07:3:0:1::17 | fc07:2::17 | Eth-Trunk15 | Eth-Trunk27 |
+| fc07:3:0:1::18 | fc07:2::18 | Eth-Trunk16 | Eth-Trunk28 |
+
+Additional management nodes at fc07:3:0:1::22 and ::23 (bonds on Eth-Trunk54-58).
+Each switch has the same trunk IDs as MLAG peer pairs. Each VPC bond is LACP 802.3ad (bond4), both links active-active. Our NFS traffic uses the **8 frontend VPC pairs** via service IPs fc07:2::11-::18.
+
+### Switch Topology
+
 ```mermaid
 graph TB
-    subgraph Storage["Huawei OceanStor Pacific 9550"]
-        C1["Controller 1<br/>fc07:2::11"]
-        C2["Controller 2<br/>fc07:2::12"]
-        C3["Controller 3<br/>fc07:2::13"]
-        C4["Controller 4<br/>fc07:2::14"]
-        C5["Controller 5<br/>fc07:2::15"]
-        C6["Controller 6<br/>fc07:2::16"]
-        C7["Controller 7<br/>fc07:2::17"]
-        C8["Controller 8<br/>fc07:2::18"]
+    subgraph Storage["OceanStor Pacific 9550 — 10 nodes"]
+        subgraph Backend["Backend (Trunk9-16)"]
+            B1["25GE"] --- B2["25GE"] --- B3["25GE"] --- B4["25GE"]
+            B5["25GE"] --- B6["25GE"] --- B7["25GE"] --- B8["25GE"]
+        end
+        C["8 Controllers<br/>fc07:3:0:1::11-::18<br/>Service IPs: fc07:2::11-::18"]
+        subgraph Frontend["Frontend (Trunk21-28)"]
+            F1["25GE"] --- F2["25GE"] --- F3["25GE"] --- F4["25GE"]
+            F5["25GE"] --- F6["25GE"] --- F7["25GE"] --- F8["25GE"]
+        end
     end
     
-    subgraph Switches["CE6866 Switches"]
-        SWA["CE6866a<br/>Eth-Trunk9-16<br/>8×25GE"]
-        SWB["CE6866b<br/>Eth-Trunk9-16<br/>8×25GE"]
+    subgraph Switches["CE6866 MLAG Pair"]
+        SWA["CE6866a<br/>Trunk1: 2×100GE north"]
+        SWB["CE6866b<br/>Trunk1: 2×100GE north"]
     end
     
-    subgraph DP01["diskpool01 (128 cores, 372GB)"]
-        NIC1A["storagea.1001<br/>fc07:2::1:a:22<br/>enp65s0f0np0"]
-        NIC1B["storageb.1001<br/>fc07:2::2:a:22<br/>enp65s0f1np1"]
+    subgraph Clients["NFS Clients"]
+        DP1["diskpool01<br/>storagea/b.1001<br/>2×100GE"]
+        DP3["diskpool03<br/>storagea/b.1001<br/>2×100GE"]
     end
     
-    subgraph DP03["diskpool03 (128 cores, 372GB)"]
-        NIC3A["storagea.1001<br/>fc07:2::1:a:24<br/>enp65s0f0np0"]
-        NIC3B["storageb.1001<br/>fc07:2::2:a:24<br/>enp65s0f1np1"]
-    end
-    
-    C1 & C3 & C5 & C7 -->|25GE| SWA
-    C2 & C4 & C6 & C8 -->|25GE| SWB
-    SWA -->|100GE| NIC1A
-    SWA -->|100GE| NIC3A
-    SWB -->|100GE| NIC1B
-    SWB -->|100GE| NIC3B
+    Frontend --> SWA & SWB
+    Backend --> SWA & SWB
+    SWA & SWB --> DP1 & DP3
 ```
 
-Per-machine NFSv3 mount layout:
+Our NFS traffic only hits the 8 frontend VPCs. Each is 25 Gb/s per switch. The 8 backend VPCs carry storage-internal replication. **NFS ceiling: 8 × 25 Gb/s = 200 Gb/s per switch.**
 
-```mermaid
-graph LR
-    M1["/dcache/pool1<br/>→ fc07:2::11"]
-    M2["/dcache/pool2<br/>→ fc07:2::12"]
-    M3["/dcache/pool3<br/>→ fc07:2::13"]
-    M4["/dcache/pool4<br/>→ fc07:2::14"]
-    M5["/dcache/pool5<br/>→ fc07:2::15"]
-    M6["/dcache/pool6<br/>→ fc07:2::16"]
-    M7["/dcache/pool7<br/>→ fc07:2::17"]
-    M8["/dcache/pool8<br/>→ fc07:2::18"]
-    
-    NI["8 × NFSv3<br/>nconnect=16 each<br/>128+ TCP connections"]
-    NI --> M1 & M2 & M3 & M4 & M5 & M6 & M7 & M8
-```
+### Storage Inventory (REST API)
+
+| Resource | Count | Detail |
+|----------|-------|--------|
+| Total nodes | 10 | 8 storage (::11-::18) + 2 management (::22-::23) |
+| Controllers in pool | 8 | All healthy, bond4 LACP 802.3ad |
+| Physical disks | 425 | 53–54 per controller, ~15TB each (SATA) |
+| Cache SSDs | 32 | 4 per controller, 3.2TB each |
+| Raw capacity | 6.0 PB | 4.3 PB usable (dCache01 pool, 99.6% free) |
+
+### OceanStor REST API
+
+**Base**: `https://dm.pacific.gridstorage.uiocloud.no:8088`
+**Auth**: `POST /api/v2/aa/sessions` → `X-Auth-Token` + `X-CSRF-Token`
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /dsware/service/resource/queryStoragePool` | Pool capacity, usage |
+| `GET /dsware/service/resource/queryDswareAllNodeIpInfo` | Controller IPs |
+| `GET /dsware/service/cluster/storagepool/queryStorageNodeInfo?poolId=0` | Per-node disk/cache |
+| `GET /api/v2/network_service/bondSubhealthSwitch.get()` | Bond status per node |
+| `POST /api/v2/pms/performance_data` | Live IOPS, bandwidth, latency |
+
+Performance indicators (cluster, object_type=57347):
+| Code | Metric | Unit |
+|------|--------|------|
+| 22 | IOPS | IO/s |
+| 25 | Read IOPS | IO/s |
+| 28 | Write IOPS | IO/s |
+| 123 | Read Bandwidth | KB/s |
+| 124 | Write Bandwidth | KB/s |
+| 811 | Total Bandwidth | KB/s |
+| 428 | Avg. Latency | ms |
 
 ---
 
