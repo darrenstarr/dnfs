@@ -1,0 +1,71 @@
+From: Petter Reinholdtsen <pere@hungry.com>
+Date: Fri, 26 Jun 2026 10:56:29 +0200
+Subject: [PATCH 7/7] fs/nfs/super.c: show remoteaddrs in /proc/mounts
+
+Display the parsed multipath address list in /proc/mounts so that
+the mount state is visible to userspace. When a mount was created with
+remoteaddrs=, these addresses now appear alongside other mount options
+such as vers=, rsize=, nconnect=, etc.
+
+Example output in /proc/mounts:
+  fc07:2::11:/dCache on /dcache type nfs4 (vers=4.1,rsize=1048576,
+  wsize=1048576,nconnect=16,...,remoteaddrs=[fc07:2::11]~[fc07:2::12],
+  addr=fc07:2::11)
+
+Addresses are formatted using the same %pI4/%pI6c kernel printf
+specifiers used by nfs_show_mountd_options() for mountd addresses.
+
+Change is created with help from OpenCode with local llama.cpp server
+using Qwen 3.6.
+
+Signed-off-by: Petter Reinholdtsen <pere@hungry.com>
+---
+ fs/nfs/super.c | 52 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/fs/nfs/super.c b/fs/nfs/super.c
+index d065d4e..a2b3c1f 100644
+--- a/fs/nfs/super.c
++++ b/fs/nfs/super.c
+@@ -180,6 +180,58 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
+ 		seq_puts(m, ",write=eager");
+ 	}
+ 
++#if IS_ENABLED(CONFIG_NFS_MULTIPATH)
++	{
++		struct nfs_multipath_addrs *list;
++		int i;
++
++		list = nfss->dnfs_remoteaddrs;
++		if (list && list->count > 1) {
++			seq_puts(m, ",remoteaddrs=");
++			for (i = 0; i < list->count; i++) {
++				struct sockaddr_storage *sa = &list->addrs[i];
++				if (i > 0)
++					seq_putc(m, '~');
++				switch (sa->ss_family) {
++				case AF_INET: {
++					struct sockaddr_in *sin =
++						(struct sockaddr_in *)sa;
++					seq_printf(m, "%pI4",
++						   &sin->sin_addr.s_addr);
++					break;
++				}
++				case AF_INET6: {
++					struct sockaddr_in6 *sin6 =
++						(struct sockaddr_in6 *)sa;
++					seq_printf(m, "[%pI6c]",
++						   &sin6->sin6_addr);
++					break;
++				}
++				default:
++					seq_puts(m, "unknown");
++					break;
++				}
++			}
++		}
++	}
++#endif
+ }
+ 
+ /*

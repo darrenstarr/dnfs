@@ -5,3 +5,4 @@
 0004-fs-nfs-client-propagate-dnfs-option.patch
 0005-fs-nfs-super-dnfs-mount-hooks.patch
 0006-fs-nfs-nfs4client-create-dnfs-xprts.patch
+0007-fs-nfs-super-show-dnfs-mount-options.patch
